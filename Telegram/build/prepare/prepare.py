@@ -492,7 +492,9 @@ mac:
         -D ENABLE_SHARED=OFF \\
         -D PNG_SUPPORTED=OFF
     cmake --build build.arm64 $MAKE_THREADS_CNT
-    cmake -B build . \\
+    CFLAGS="-arch x86_64" cmake -B build . \\
+        -D CMAKE_OSX_ARCHITECTURES="x86_64" \\
+        -D CMAKE_SYSTEM_PROCESSOR=x86_64 \\
         -D CMAKE_BUILD_TYPE=Release \\
         -D CMAKE_INSTALL_PREFIX=$USED_PREFIX \\
         -D CMAKE_OSX_DEPLOYMENT_TARGET:STRING=$MACOSX_DEPLOYMENT_TARGET \\
@@ -613,7 +615,7 @@ mac:
     mkdir out.arm64
     mv lib/.libs/libiconv.a out.arm64
     make clean
-    CFLAGS="$MIN_VER $UNGUARDED" CPPFLAGS="$MIN_VER $UNGUARDED" LDFLAGS="$MIN_VER" ./configure --enable-static --prefix=$USED_PREFIX
+    CFLAGS="$MIN_VER $UNGUARDED -arch x86_64" CPPFLAGS="$MIN_VER $UNGUARDED -arch x86_64" LDFLAGS="$MIN_VER" ./configure --enable-static --host=x86 --prefix=$USED_PREFIX
     make $MAKE_THREADS_CNT
     lipo -create out.arm64/libiconv.a lib/.libs/libiconv.a -output lib/.libs/libiconv.a
     make install
@@ -752,9 +754,12 @@ depends:yasm/yasm
     make clean
 
     ./configure --prefix=$USED_PREFIX \
-    --extra-cflags="$MIN_VER $UNGUARDED -DCONFIG_SAFE_BITSTREAM_READER=1 -I$USED_PREFIX/include" \
-    --extra-cxxflags="$MIN_VER $UNGUARDED -DCONFIG_SAFE_BITSTREAM_READER=1 -I$USED_PREFIX/include" \
-    --extra-ldflags="$MIN_VER $USED_PREFIX/lib/libopus.a" \
+    --enable-cross-compile \
+    --target-os=darwin \
+    --arch="x86_64" \
+    --extra-cflags="$MIN_VER -arch x86_64 $UNGUARDED -DCONFIG_SAFE_BITSTREAM_READER=1 -I$USED_PREFIX/include" \
+    --extra-cxxflags="$MIN_VER -arch x86_64 $UNGUARDED -DCONFIG_SAFE_BITSTREAM_READER=1 -I$USED_PREFIX/include" \
+    --extra-ldflags="$MIN_VER -arch x86_64 $USED_PREFIX/lib/libopus.a" \
     --enable-protocol=file \
     --enable-libopus \
     --disable-programs \
@@ -1030,7 +1035,7 @@ release:
 
 if buildQt5:
     stage('qt_5_15_2', """
-    git clone git://code.qt.io/qt/qt5.git qt_5_15_2
+    git clone https://github.com/qt/qt5.git qt_5_15_2
     cd qt_5_15_2
     perl init-repository --module-subset=qtbase,qtimageformats,qtsvg
     git checkout v5.15.2
@@ -1113,7 +1118,7 @@ mac:
 if buildQt6:
     stage('qt_6_2_0', """
 mac:
-    git clone -b v6.2.0 git://code.qt.io/qt/qt5.git qt_6_2_0
+    git clone -b v6.2.0 https://github.com/qt/qt5.git qt_6_2_0
     cd qt_6_2_0
     perl init-repository --module-subset=qtbase,qtimageformats,qtsvg,qt5compat
 depends:patches/qtbase_6_2_0/*.patch
