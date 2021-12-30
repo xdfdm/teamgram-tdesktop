@@ -19,11 +19,11 @@ if (APPLE)
     set(project_langs C CXX OBJC OBJCXX)
 endif()
 
-project(Telegram
+project(Teamgram
     LANGUAGES ${project_langs}
     VERSION ${desktop_app_version_cmake}
-    DESCRIPTION "Official Telegram Desktop messenger"
-    HOMEPAGE_URL "https://desktop.telegram.org"
+    DESCRIPTION "Official Teamgram Desktop messenger"
+    HOMEPAGE_URL "https://desktop.teamgram.net"
 )
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT Telegram)
 

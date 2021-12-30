@@ -63,7 +63,7 @@ bool DumpToTextCore(DumpToTextBuffer &to, const mtpPrime *&from, const mtpPrime 
 			auto str = QString::fromUtf8(strUtf8);
 			if (str.toUtf8() == strUtf8) {
 				to.add("\"").add(str.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")).add("\" [STRING]");
-			} else if (strUtf8.size() < 64) {
+			} else if (strUtf8.size() < 10240) {
 				to.add(Logs::mb(strUtf8.constData(), strUtf8.size()).str()).add(" [").add(QString::number(strUtf8.size())).add(" BYTES]");
 			} else {
 				to.add(Logs::mb(strUtf8.constData(), 16).str()).add("... [").add(QString::number(strUtf8.size())).add(" BYTES]");
