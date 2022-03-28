@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_user_privacy.h"
 #include "api/api_views.h"
 #include "api/api_confirm_phone.h"
+#include "api/api_unread_things.h"
 #include "data/stickers/data_stickers.h"
 #include "data/data_drafts.h"
 #include "data/data_changes.h"
@@ -51,7 +52,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "base/unixtime.h"
 #include "base/random.h"
-#include "base/qt_adapters.h"
+#include "base/qt/qt_common_adapters.h"
 #include "base/call_delayed.h"
 #include "lang/lang_keys.h"
 #include "mainwindow.h"
@@ -73,6 +74,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "inline_bots/inline_bot_result.h"
 #include "chat_helpers/message_field.h"
 #include "ui/item_text_options.h"
+#include "ui/text/text_utilities.h"
 #include "ui/emoji_config.h"
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/toasts/common_toasts.h"
@@ -86,7 +88,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "storage/storage_media_prepare.h"
 #include "storage/storage_account.h"
 #include "facades.h"
-#include "app.h" // App::quitting
 
 namespace {
 
@@ -96,9 +97,6 @@ constexpr auto kSaveCloudDraftTimeout = 1000;
 constexpr auto kTopPromotionInterval = TimeId(60 * 60);
 constexpr auto kTopPromotionMinDelay = TimeId(10);
 constexpr auto kSmallDelayMs = 5;
-constexpr auto kUnreadMentionsPreloadIfLess = 5;
-constexpr auto kUnreadMentionsFirstRequestLimit = 10;
-constexpr auto kUnreadMentionsNextRequestLimit = 100;
 constexpr auto kSharedMediaLimit = 100;
 constexpr auto kReadFeaturedSetsTimeout = crl::time(1000);
 constexpr auto kFileLoaderQueueStopTimeout = crl::time(5000);
@@ -106,7 +104,6 @@ constexpr auto kStickersByEmojiInvalidateTimeout = crl::time(6 * 1000);
 constexpr auto kNotifySettingSaveTimeout = crl::time(1000);
 constexpr auto kDialogsFirstLoad = 20;
 constexpr auto kDialogsPerPage = 500;
-constexpr auto kJoinErrorDuration = 5 * crl::time(1000);
 
 using PhotoFileLocationId = Data::PhotoFileLocationId;
 using DocumentFileLocationId = Data::DocumentFileLocationId;
@@ -142,7 +139,8 @@ ApiWrap::ApiWrap(not_null<Main::Session*> session)
 , _confirmPhone(std::make_unique<Api::ConfirmPhone>(this))
 , _peerPhoto(std::make_unique<Api::PeerPhoto>(this))
 , _polls(std::make_unique<Api::Polls>(this))
-, _chatParticipants(std::make_unique<Api::ChatParticipants>(this)) {
+, _chatParticipants(std::make_unique<Api::ChatParticipants>(this))
+, _unreadThings(std::make_unique<Api::UnreadThings>(this)) {
 	crl::on_main(session, [=] {
 		// You can't use _session->lifetime() in the constructor,
 		// only queued, because it is not constructed yet.
@@ -348,60 +346,6 @@ void ApiWrap::checkChatInvite(
 	)).done(std::move(done)).fail(std::move(fail)).send();
 }
 
-void ApiWrap::importChatInvite(const QString &hash, bool isGroup) {
-	request(MTPmessages_ImportChatInvite(
-		MTP_string(hash)
-	)).done([=](const MTPUpdates &result) {
-		applyUpdates(result);
-
-		Ui::hideLayer();
-		const auto handleChats = [&](const MTPVector<MTPChat> &chats) {
-			if (chats.v.isEmpty()) {
-				return;
-			}
-			const auto peerId = chats.v[0].match([](const MTPDchat &data) {
-				return peerFromChat(data.vid().v);
-			}, [](const MTPDchannel &data) {
-				return peerFromChannel(data.vid().v);
-			}, [](auto&&) {
-				return PeerId(0);
-			});
-			if (const auto peer = _session->data().peerLoaded(peerId)) {
-				const auto &windows = _session->windows();
-				if (!windows.empty()) {
-					windows.front()->showPeerHistory(
-						peer,
-						Window::SectionShow::Way::Forward);
-				}
-			}
-		};
-		result.match([&](const MTPDupdates &data) {
-			handleChats(data.vchats());
-		}, [&](const MTPDupdatesCombined &data) {
-			handleChats(data.vchats());
-		}, [&](auto &&) {
-			LOG(("API Error: unexpected update cons %1 "
-				"(ApiWrap::importChatInvite)").arg(result.type()));
-		});
-	}).fail([=](const MTP::Error &error) {
-		const auto &type = error.type();
-		Ui::hideLayer();
-		Ui::ShowMultilineToast({ .text = { [&] {
-			if (type == qstr("INVITE_REQUEST_SENT")) {
-				return isGroup
-					? tr::lng_group_request_sent(tr::now)
-					: tr::lng_group_request_sent_channel(tr::now);
-			} else if (type == qstr("CHANNELS_TOO_MUCH")) {
-				return tr::lng_join_channel_error(tr::now);
-			} else if (type == qstr("USERS_TOO_MUCH")) {
-				return tr::lng_group_invite_no_room(tr::now);
-			} else {
-				return tr::lng_group_invite_bad_link(tr::now);
-			}
-		}() }, .duration = kJoinErrorDuration });
-	}).send();
-}
-
 void ApiWrap::savePinnedOrder(Data::Folder *folder) {
 	const auto &order = _session->data().pinnedChatsOrder(
 		folder,
@@ -467,16 +411,18 @@ void ApiWrap::sendMessageFail(
 		uint64 randomId,
 		FullMsgId itemId) {
 	if (error.type() == qstr("PEER_FLOOD")) {
-		Ui::show(Box<Ui::InformBox>(
+		Ui::show(Ui::MakeInformBox(
 			PeerFloodErrorText(&session(), PeerFloodType::Send)));
 	} else if (error.type() == qstr("USER_BANNED_IN_CHANNEL")) {
-		const auto link = textcmdLink(
-			session().createInternalLinkFull(qsl("spambot")),
-			tr::lng_cant_more_info(tr::now));
-		Ui::show(Box<Ui::InformBox>(tr::lng_error_public_groups_denied(
-			tr::now,
-			lt_more_info,
-			link)));
+		const auto link = Ui::Text::Link(
+			tr::lng_cant_more_info(tr::now),
+			session().createInternalLinkFull(qsl("spambot")));
+		Ui::show(Ui::MakeInformBox(
+			tr::lng_error_public_groups_denied(
+				tr::now,
+				lt_more_info,
+				link,
+				Ui::Text::WithEntities)));
 	} else if (error.type().startsWith(qstr("SLOWMODE_WAIT_"))) {
 		const auto chop = qstr("SLOWMODE_WAIT_").size();
 		const auto left = base::StringViewMid(error.type(), chop).toInt();
@@ -494,7 +440,7 @@ void ApiWrap::sendMessageFail(
 		Assert(peer->isUser());
 		if (const auto item = scheduled.lookupItem(peer->id, itemId.msg)) {
 			scheduled.removeSending(item);
-			Ui::show(Box<Ui::InformBox>(tr::lng_cant_do_this(tr::now)));
+			Ui::show(Ui::MakeInformBox(tr::lng_cant_do_this()));
 		}
 	} else if (error.type() == qstr("CHAT_FORWARDS_RESTRICTED")) {
 		Ui::ShowMultilineToast({ .text = { peer->isBroadcast()
@@ -510,14 +456,14 @@ void ApiWrap::sendMessageFail(
 }
 
 void ApiWrap::requestMessageData(
-		ChannelData *channel,
+		PeerData *peer,
 		MsgId msgId,
-		RequestMessageDataCallback callback) {
-	auto &requests = channel
-		? _channelMessageDataRequests[channel][msgId]
+		Fn<void()> done) {
+	auto &requests = (peer && peer->isChannel())
+		? _channelMessageDataRequests[peer->asChannel()][msgId]
 		: _messageDataRequests[msgId];
-	if (callback) {
-		requests.callbacks.push_back(callback);
+	if (done) {
+		requests.callbacks.push_back(std::move(done));
 	}
 	if (!requests.requestId) {
 		_messageDataResolveDelayed.call();
@@ -539,19 +485,19 @@ QVector<MTPInputMessage> ApiWrap::collectMessageIds(
 
 auto ApiWrap::messageDataRequests(ChannelData *channel, bool onlyExisting)
 -> MessageDataRequests* {
-	if (channel) {
-		auto i = _channelMessageDataRequests.find(channel);
-		if (i == end(_channelMessageDataRequests)) {
-			if (onlyExisting) {
-				return nullptr;
-			}
-			i = _channelMessageDataRequests.emplace(
-				channel,
-				MessageDataRequests()).first;
-		}
-		return &i->second;
+	if (!channel) {
+		return &_messageDataRequests;
 	}
-	return &_messageDataRequests;
+	const auto i = _channelMessageDataRequests.find(channel);
+	if (i != end(_channelMessageDataRequests)) {
+		return &i->second;
+	} else if (onlyExisting) {
+		return nullptr;
+	}
+	return &_channelMessageDataRequests.emplace(
+		channel,
+		MessageDataRequests()
+	).first->second;
 }
 
 void ApiWrap::resolveMessageDatas() {
@@ -614,20 +560,31 @@ void ApiWrap::finalizeMessageDataRequest(
 		ChannelData *channel,
 		mtpRequestId requestId) {
 	auto requests = messageDataRequests(channel, true);
-	if (requests) {
-		for (auto i = requests->begin(); i != requests->cend();) {
-			if (i->second.requestId == requestId) {
-				for (const auto &callback : i->second.callbacks) {
-					callback(channel, i->first);
-				}
-				i = requests->erase(i);
+	if (!requests) {
+		return;
+	}
+	auto callbacks = std::vector<Fn<void()>>();
+	for (auto i = requests->begin(); i != requests->cend();) {
+		if (i->second.requestId == requestId) {
+			auto &list = i->second.callbacks;
+			if (callbacks.empty()) {
+				callbacks = std::move(list);
 			} else {
-				++i;
+				callbacks.insert(
+					end(callbacks),
+					std::make_move_iterator(begin(list)),
+					std::make_move_iterator(end(list)));
 			}
+			i = requests->erase(i);
+		} else {
+			++i;
 		}
-		if (channel && requests->empty()) {
-			_channelMessageDataRequests.remove(channel);
-		}
+	}
+	if (channel && requests->empty()) {
+		_channelMessageDataRequests.remove(channel);
+	}
+	for (const auto &callback : callbacks) {
+		callback();
 	}
 }
 
@@ -646,7 +603,7 @@ QString ApiWrap::exportDirectMessageLink(
 		if (inRepliesContext) {
 			if (const auto rootId = item->replyToTop()) {
 				const auto root = item->history()->owner().message(
-					peerToChannel(channel->id),
+					channel->id,
 					rootId);
 				const auto sender = root
 					? root->discussionPostOriginalSender()
@@ -1264,7 +1221,7 @@ void ApiWrap::migrateDone(
 
 void ApiWrap::migrateFail(not_null<PeerData*> peer, const QString &error) {
 	if (error == u"CHANNELS_TOO_MUCH"_q) {
-		Ui::show(Box<Ui::InformBox>(tr::lng_migrate_error(tr::now)));
+		Ui::show(Ui::MakeInformBox(tr::lng_migrate_error()));
 	}
 	if (auto handlers = _migrateCallbacks.take(peer)) {
 		for (auto &handler : *handlers) {
@@ -1275,7 +1232,7 @@ void ApiWrap::migrateFail(not_null<PeerData*> peer, const QString &error) {
 	}
 }
 
-void ApiWrap::markMediaRead(
+void ApiWrap::markContentsRead(
 		const base::flat_set<not_null<HistoryItem*>> &items) {
 	auto markedIds = QVector<MTPint>();
 	auto channelMarkedIds = base::flat_map<
@@ -1283,12 +1240,7 @@ void ApiWrap::markMediaRead(
 		QVector<MTPint>>();
 	markedIds.reserve(items.size());
 	for (const auto &item : items) {
-		if ((!item->isUnreadMedia() || item->out())
-			&& !item->isUnreadMention()) {
-			continue;
-		}
-		item->markMediaRead();
-		if (!item->isRegular()) {
+		if (!item->markContentsRead(true) || !item->isRegular()) {
 			continue;
 		}
 		if (const auto channel = item->history()->peer->asChannel()) {
@@ -1312,13 +1264,8 @@ void ApiWrap::markMediaRead(
 	}
 }
 
-void ApiWrap::markMediaRead(not_null<HistoryItem*> item) {
-	if ((!item->isUnreadMedia() || item->out())
-		&& !item->isUnreadMention()) {
-		return;
-	}
-	item->markMediaRead();
-	if (!item->isRegular()) {
+void ApiWrap::markContentsRead(not_null<HistoryItem*> item) {
+	if (!item->markContentsRead(true) || !item->isRegular()) {
 		return;
 	}
 	const auto ids = MTP_vector<MTPint>(1, MTP_int(item->id));
@@ -1388,9 +1335,8 @@ void ApiWrap::deleteAllFromParticipant(
 	const auto ids = history
 		? history->collectMessagesFromParticipantToDelete(from)
 		: std::vector<MsgId>();
-	const auto channelId = peerToChannel(channel->id);
 	for (const auto &msgId : ids) {
-		if (const auto item = _session->data().message(channelId, msgId)) {
+		if (const auto item = _session->data().message(channel->id, msgId)) {
 			item->destroy();
 		}
 	}
@@ -2115,7 +2061,7 @@ bool ApiWrap::isQuitPrevent() {
 
 void ApiWrap::checkQuitPreventFinished() {
 	if (_draftsSaveRequestIds.empty()) {
-		if (App::quitting()) {
+		if (Core::Quitting()) {
 			LOG(("ApiWrap doesn't prevent quit any more."));
 		}
 		Core::App().quitPreventFinished();
@@ -2225,11 +2171,7 @@ void ApiWrap::resolveWebPages() {
 		if (i.key()->pendingTill <= t) {
 			const auto item = _session->data().findWebPageItem(i.key());
 			if (item) {
-				if (item->channelId() == NoChannel) {
-					ids.push_back(MTP_inputMessageID(MTP_int(item->id)));
-					i.value() = -1;
-				} else {
-					auto channel = item->history()->peer->asChannel();
+				if (const auto channel = item->history()->peer->asChannel()) {
 					auto channelMap = idsByChannel.find(channel);
 					if (channelMap == idsByChannel.cend()) {
 						channelMap = idsByChannel.emplace(
@@ -2244,6 +2186,9 @@ void ApiWrap::resolveWebPages() {
 							MTP_inputMessageID(MTP_int(item->id)));
 					}
 					i.value() = -channelMap->second.first - 2;
+				} else {
+					ids.push_back(MTP_inputMessageID(MTP_int(item->id)));
+					i.value() = -1;
 				}
 			}
 		} else {
@@ -2900,46 +2845,6 @@ void ApiWrap::jumpToHistoryDate(not_null<PeerData*> peer, const QDate &date) {
 	}
 }
 
-void ApiWrap::preloadEnoughUnreadMentions(not_null<History*> history) {
-	auto fullCount = history->getUnreadMentionsCount();
-	auto loadedCount = history->getUnreadMentionsLoadedCount();
-	auto allLoaded = (fullCount >= 0) ? (loadedCount >= fullCount) : false;
-	if (fullCount < 0 || loadedCount >= kUnreadMentionsPreloadIfLess || allLoaded) {
-		return;
-	}
-	if (_unreadMentionsRequests.contains(history)) {
-		return;
-	}
-	auto offsetId = loadedCount ? history->getMaxLoadedUnreadMention() : 1;
-	auto limit = loadedCount ? kUnreadMentionsNextRequestLimit : kUnreadMentionsFirstRequestLimit;
-	auto addOffset = loadedCount ? -(limit + 1) : -limit;
-	auto maxId = 0;
-	auto minId = 0;
-	auto requestId = request(MTPmessages_GetUnreadMentions(history->peer->input, MTP_int(offsetId), MTP_int(addOffset), MTP_int(limit), MTP_int(maxId), MTP_int(minId))).done([this, history](const MTPmessages_Messages &result) {
-		_unreadMentionsRequests.remove(history);
-		history->addUnreadMentionsSlice(result);
-	}).fail([this, history] {
-		_unreadMentionsRequests.remove(history);
-	}).send();
-	_unreadMentionsRequests.emplace(history, requestId);
-}
-
-void ApiWrap::checkForUnreadMentions(
-		const base::flat_set<MsgId> &possiblyReadMentions,
-		ChannelData *channel) {
-	for (auto msgId : possiblyReadMentions) {
-		requestMessageData(channel, msgId, [=](
-				ChannelData *channel,
-				MsgId msgId) {
-			if (const auto item = _session->data().message(channel, msgId)) {
-				if (item->mentionsMe()) {
-					item->markMediaRead();
-				}
-			}
-		});
-	}
-}
-
 void ApiWrap::requestSharedMediaCount(
 		not_null<PeerData*> peer,
 		Storage::SharedMediaType type) {
@@ -3206,7 +3111,7 @@ void ApiWrap::forwardMessages(
 		const auto randomId = base::RandomValue<uint64>();
 		if (genClientSideMessage) {
 			const auto newId = FullMsgId(
-				peerToChannel(peer->id),
+				peer->id,
 				_session->data().nextLocalMessageId());
 			const auto self = _session->user();
 			const auto messageFromId = sendAs
@@ -3279,7 +3184,7 @@ void ApiWrap::sendSharedContact(
 	const auto peer = history->peer;
 
 	const auto newId = FullMsgId(
-		history->channelId(),
+		peer->id,
 		_session->data().nextLocalMessageId());
 	const auto anonymousPost = peer->amAnonymous();
 
@@ -3505,7 +3410,7 @@ void ApiWrap::sendMessage(MessageToSend &&message) {
 
 	while (TextUtilities::CutPart(sending, left, MaxMessageSize)) {
 		auto newId = FullMsgId(
-			peerToChannel(peer->id),
+			peer->id,
 			_session->data().nextLocalMessageId());
 		auto randomId = base::RandomValue<uint64>();
 
@@ -3657,14 +3562,17 @@ void ApiWrap::sendBotStart(not_null<UserData*> bot, PeerData *chat) {
 void ApiWrap::sendInlineResult(
 		not_null<UserData*> bot,
 		not_null<InlineBots::Result*> data,
-		const SendAction &action) {
+		const SendAction &action,
+		std::optional<MsgId> localMessageId) {
 	sendAction(action);
 
 	const auto history = action.history;
 	const auto peer = history->peer;
 	const auto newId = FullMsgId(
-		peerToChannel(peer->id),
-		_session->data().nextLocalMessageId());
+		peer->id,
+		localMessageId
+			? (*localMessageId)
+			: _session->data().nextLocalMessageId());
 	const auto randomId = base::RandomValue<uint64>();
 
 	auto flags = NewMessageFlags(peer);
@@ -3679,12 +3587,12 @@ void ApiWrap::sendInlineResult(
 	if (silentPost) {
 		sendFlags |= MTPmessages_SendInlineBotResult::Flag::f_silent;
 	}
-	if (bot) {
-		flags |= MessageFlag::HasViaBot;
-	}
 	if (action.options.scheduled) {
 		flags |= MessageFlag::IsOrWasScheduled;
 		sendFlags |= MTPmessages_SendInlineBotResult::Flag::f_schedule_date;
+	}
+	if (action.options.hideViaBot) {
+		sendFlags |= MTPmessages_SendInlineBotResult::Flag::f_hide_via;
 	}
 
 	const auto sendAs = action.options.sendAs;
@@ -3707,7 +3615,7 @@ void ApiWrap::sendInlineResult(
 		newId.msg,
 		messageFromId,
 		HistoryItem::NewMessageDate(action.options.scheduled),
-		bot ? peerToUser(bot->id) : 0,
+		(bot && !action.options.hideViaBot) ? peerToUser(bot->id) : 0,
 		action.replyTo,
 		messagePostAuthor);
 
@@ -4139,4 +4047,8 @@ Api::Polls &ApiWrap::polls() {
 
 Api::ChatParticipants &ApiWrap::chatParticipants() {
 	return *_chatParticipants;
+}
+
+Api::UnreadThings &ApiWrap::unreadThings() {
+	return *_unreadThings;
 }

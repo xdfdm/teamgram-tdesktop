@@ -25,9 +25,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/painter.h"
 #include "ui/filter_icons.h"
 #include "settings/settings_common.h"
+#include "core/application.h"
 #include "lang/lang_keys.h"
 #include "apiwrap.h"
-#include "app.h"
 #include "styles/style_settings.h"
 #include "styles/style_layers.h"
 #include "styles/style_boxes.h"
@@ -300,7 +300,9 @@ void FilterRowButton::paintEvent(QPaintEvent *e) {
 			st::settingsFilterIconLeft,
 			(height() - icon->height()) / 2,
 			width(),
-			(over ? st::menuIconFgOver : st::menuIconFg)->c);
+			(over
+				? st::dialogsUnreadBgMutedOver
+				: st::dialogsUnreadBgMuted)->c);
 	}
 }
 
@@ -441,9 +443,7 @@ void FilterRowButton::paintEvent(QPaintEvent *e) {
 	AddSubsectionTitle(aboutRows, tr::lng_filters_recommended());
 
 	const auto suggested = lifetime.make_state<rpl::variable<int>>();
-	rpl::single(
-		rpl::empty_value()
-	) | rpl::then(
+	rpl::single(rpl::empty) | rpl::then(
 		session->data().chatsFilters().suggestedUpdated()
 	) | rpl::map([=] {
 		return session->data().chatsFilters().suggestedFilters();
@@ -575,7 +575,7 @@ Folders::Folders(
 }
 
 Folders::~Folders() {
-	if (!App::quitting()) {
+	if (!Core::Quitting()) {
 		_save();
 	}
 }

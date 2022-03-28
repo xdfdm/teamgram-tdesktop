@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "history/history_location_manager.h"
 #include "history/view/history_view_element.h"
+#include "history/view/history_view_item_preview.h"
 #include "history/view/media/history_view_photo.h"
 #include "history/view/media/history_view_sticker.h"
 #include "history/view/media/history_view_gif.h"
@@ -50,9 +51,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_origin.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
+#include "core/application.h"
 #include "lang/lang_keys.h"
 #include "storage/file_upload.h"
-#include "app.h"
 #include "styles/style_chat.h"
 #include "styles/style_dialogs.h"
 
@@ -65,43 +66,27 @@ constexpr auto kMaxPreviewImages = 3;
 using ItemPreview = HistoryView::ItemPreview;
 using ItemPreviewImage = HistoryView::ItemPreviewImage;
 
-[[nodiscard]] QString WithCaptionDialogsText(
+[[nodiscard]] TextWithEntities WithCaptionNotificationText(
 		const QString &attachType,
-		const QString &caption,
-		bool hasMiniImages) {
-	if (caption.isEmpty()) {
-		return textcmdLink(1, TextUtilities::Clean(attachType));
+		const TextWithEntities &caption,
+		bool hasMiniImages = false) {
+	if (caption.text.isEmpty()) {
+		return Ui::Text::PlainLink(attachType);
 	}
 
 	return hasMiniImages
-		? TextUtilities::Clean(caption)
+		? caption
 		: tr::lng_dialogs_text_media(
 			tr::now,
 			lt_media_part,
-			textcmdLink(1, tr::lng_dialogs_text_media_wrapped(
+			tr::lng_dialogs_text_media_wrapped(
 				tr::now,
 				lt_media,
-				TextUtilities::Clean(attachType))),
+				Ui::Text::PlainLink(attachType),
+				Ui::Text::WithEntities),
 			lt_caption,
-			TextUtilities::Clean(caption));
-}
-
-[[nodiscard]] QString WithCaptionNotificationText(
-		const QString &attachType,
-		const QString &caption) {
-	if (caption.isEmpty()) {
-		return attachType;
-	}
-
-	return tr::lng_dialogs_text_media(
-		tr::now,
-		lt_media_part,
-		tr::lng_dialogs_text_media_wrapped(
-			tr::now,
-			lt_media,
-			attachType),
-		lt_caption,
-		caption);
+			caption,
+			Ui::Text::WithEntities);
 }
 
 [[nodiscard]] QImage PreparePreviewImage(
@@ -143,9 +128,9 @@ using ItemPreviewImage = HistoryView::ItemPreviewImage;
 					Images::CornersMask(pxRadius)).first->second;
 			}
 		}
-		Images::prepareRound(square, *cache.lastUsed);
+		square = Images::Round(std::move(square), *cache.lastUsed);
 	} else {
-		Images::prepareRound(square, radius);
+		square = Images::Round(std::move(square), radius);
 	}
 	square.setDevicePixelRatio(factor);
 	return square;
@@ -350,11 +335,7 @@ bool Media::canBeGrouped() const {
 }
 
 ItemPreview Media::toPreview(ToPreviewOptions options) const {
-	auto result = notificationText();
-	auto text = result.isEmpty()
-		? QString()
-		: textcmdLink(1, TextUtilities::Clean(std::move(result)));
-	return { .text = std::move(text) };
+	return { .text = notificationText() };
 }
 
 bool Media::hasReplyPreview() const {
@@ -422,9 +403,8 @@ std::unique_ptr<HistoryView::Media> Media::createView(
 ItemPreview Media::toGroupPreview(
 		const HistoryItemsList &items,
 		ToPreviewOptions options) const {
-	const auto genericText = textcmdLink(
-		1,
-		TextUtilities::Clean(tr::lng_in_dlg_album(tr::now)));
+	const auto genericText = Ui::Text::PlainLink(
+		tr::lng_in_dlg_album(tr::now));
 	auto result = ItemPreview();
 	auto loadingContext = std::vector<std::any>();
 	for (const auto &item : items) {
@@ -446,17 +426,17 @@ ItemPreview Media::toGroupPreview(
 			if (single.loadingContext.has_value()) {
 				loadingContext.push_back(std::move(single.loadingContext));
 			}
-			const auto original = item->originalText().text;
-			if (!original.isEmpty()) {
-				if (result.text.isEmpty()) {
-					result.text = TextUtilities::Clean(original);
+			const auto original = item->originalText();
+			if (!original.text.isEmpty()) {
+				if (result.text.text.isEmpty()) {
+					result.text = original;
 				} else {
 					result.text = genericText;
 				}
 			}
 		}
 	}
-	if (result.text.isEmpty()) {
+	if (result.text.text.isEmpty()) {
 		result.text = genericText;
 	}
 	if (!loadingContext.empty()) {
@@ -484,7 +464,7 @@ MediaPhoto::MediaPhoto(
 }
 
 MediaPhoto::~MediaPhoto() {
-	if (uploading() && !App::quitting()) {
+	if (uploading() && !Core::Quitting()) {
 		parent()->history()->session().uploader().cancel(parent()->fullId());
 	}
 	parent()->history()->owner().unregisterPhotoItem(_photo, parent());
@@ -530,10 +510,10 @@ bool MediaPhoto::replyPreviewLoaded() const {
 	return _photo->replyPreviewLoaded();
 }
 
-QString MediaPhoto::notificationText() const {
+TextWithEntities MediaPhoto::notificationText() const {
 	return WithCaptionNotificationText(
 		tr::lng_in_dlg_photo(tr::now),
-		parent()->originalText().text);
+		parent()->originalText());
 }
 
 ItemPreview MediaPhoto::toPreview(ToPreviewOptions options) const {
@@ -563,10 +543,11 @@ ItemPreview MediaPhoto::toPreview(ToPreviewOptions options) const {
 	}
 	const auto type = tr::lng_in_dlg_photo(tr::now);
 	const auto caption = options.hideCaption
-		? QString()
-		: parent()->originalText().text;
+		? TextWithEntities()
+		: parent()->originalText();
+	const auto hasMiniImages = !images.empty();
 	return {
-		.text = WithCaptionDialogsText(type, caption, !images.empty()),
+		.text = WithCaptionNotificationText(type, caption, hasMiniImages),
 		.images = std::move(images),
 		.loadingContext = std::move(context),
 	};
@@ -668,7 +649,7 @@ MediaFile::MediaFile(
 }
 
 MediaFile::~MediaFile() {
-	if (uploading() && !App::quitting()) {
+	if (uploading() && !Core::Quitting()) {
 		parent()->history()->session().uploader().cancel(parent()->fullId());
 	}
 	parent()->history()->owner().unregisterDocumentItem(
@@ -782,20 +763,22 @@ ItemPreview MediaFile::toPreview(ToPreviewOptions options) const {
 		return tr::lng_in_dlg_file(tr::now);
 	}();
 	const auto caption = options.hideCaption
-		? QString()
-		: parent()->originalText().text;
+		? TextWithEntities()
+		: parent()->originalText();
+	const auto hasMiniImages = !images.empty();
 	return {
-		.text = WithCaptionDialogsText(type, caption, !images.empty()),
+		.text = WithCaptionNotificationText(type, caption, hasMiniImages),
 		.images = std::move(images),
 		.loadingContext = std::move(context),
 	};
 }
 
-QString MediaFile::notificationText() const {
+TextWithEntities MediaFile::notificationText() const {
 	if (const auto sticker = _document->sticker()) {
-		return _emoji.isEmpty()
+		const auto text = _emoji.isEmpty()
 			? tr::lng_in_dlg_sticker(tr::now)
 			: tr::lng_in_dlg_sticker_emoji(tr::now, lt_emoji, _emoji);
+		return Ui::Text::PlainLink(text);
 	}
 	const auto type = [&] {
 		if (_document->isVideoMessage()) {
@@ -813,7 +796,7 @@ QString MediaFile::notificationText() const {
 		}
 		return tr::lng_in_dlg_file(tr::now);
 	}();
-	return WithCaptionNotificationText(type, parent()->originalText().text);
+	return WithCaptionNotificationText(type, parent()->originalText());
 }
 
 QString MediaFile::pinnedTextSubstring() const {
@@ -964,14 +947,16 @@ std::unique_ptr<HistoryView::Media> MediaFile::createView(
 		not_null<HistoryView::Element*> message,
 		not_null<HistoryItem*> realParent,
 		HistoryView::Element *replacing) {
-	if (_document->sticker()) {
+	if (const auto info = _document->sticker(); info && !info->isWebm()) {
 		return std::make_unique<HistoryView::UnwrappedMedia>(
 			message,
 			std::make_unique<HistoryView::Sticker>(
 				message,
 				_document,
 				replacing));
-	} else if (_document->isAnimation() || _document->isVideoFile()) {
+	} else if (_document->isAnimation()
+		|| _document->isVideoFile()
+		|| (info && info->isWebm())) {
 		return std::make_unique<HistoryView::Gif>(
 			message,
 			realParent,
@@ -1021,8 +1006,8 @@ const SharedContact *MediaContact::sharedContact() const {
 	return &_contact;
 }
 
-QString MediaContact::notificationText() const {
-	return tr::lng_in_dlg_contact(tr::now);
+TextWithEntities MediaContact::notificationText() const {
+	return tr::lng_in_dlg_contact(tr::now, Ui::Text::WithEntities);
 }
 
 QString MediaContact::pinnedTextSubstring() const {
@@ -1110,11 +1095,16 @@ Data::CloudImage *MediaLocation::location() const {
 ItemPreview MediaLocation::toPreview(ToPreviewOptions options) const {
 	const auto type = tr::lng_maps_point(tr::now);
 	const auto hasMiniImages = false;
-	return { .text = WithCaptionDialogsText(type, _title, hasMiniImages) };
+	const auto text = TextWithEntities{ .text = _title };
+	return {
+		.text = WithCaptionNotificationText(type, text, hasMiniImages),
+	};
 }
 
-QString MediaLocation::notificationText() const {
-	return WithCaptionNotificationText(tr::lng_maps_point(tr::now), _title);
+TextWithEntities MediaLocation::notificationText() const {
+	return WithCaptionNotificationText(
+		tr::lng_maps_point(tr::now),
+		{ .text = _title});
 }
 
 QString MediaLocation::pinnedTextSubstring() const {
@@ -1125,11 +1115,11 @@ TextForMimeData MediaLocation::clipboardText() const {
 	auto result = TextForMimeData::Simple(
 		qstr("[ ") + tr::lng_maps_point(tr::now) + qstr(" ]\n"));
 	auto titleResult = TextUtilities::ParseEntities(
-		TextUtilities::Clean(_title),
+		_title,
 		Ui::WebpageTextTitleOptions().flags);
 	auto descriptionResult = TextUtilities::ParseEntities(
-		TextUtilities::Clean(_description),
-		TextParseLinks | TextParseMultiline | TextParseRichText);
+		_description,
+		TextParseLinks | TextParseMultiline);
 	if (!titleResult.empty()) {
 		result.append(std::move(titleResult));
 	}
@@ -1178,7 +1168,7 @@ const Call *MediaCall::call() const {
 	return &_call;
 }
 
-QString MediaCall::notificationText() const {
+TextWithEntities MediaCall::notificationText() const {
 	auto result = Text(parent(), _call.finishReason, _call.video);
 	if (_call.duration > 0) {
 		result = tr::lng_call_type_and_duration(
@@ -1188,7 +1178,7 @@ QString MediaCall::notificationText() const {
 			lt_duration,
 			Ui::FormatDurationWords(_call.duration));
 	}
-	return result;
+	return { .text = result };
 }
 
 QString MediaCall::pinnedTextSubstring() const {
@@ -1196,8 +1186,7 @@ QString MediaCall::pinnedTextSubstring() const {
 }
 
 TextForMimeData MediaCall::clipboardText() const {
-	return TextForMimeData::Simple(
-		qstr("[ ") + notificationText() + qstr(" ]"));
+	return { .rich = notificationText() };
 }
 
 bool MediaCall::allowsForward() const {
@@ -1305,8 +1294,8 @@ ItemPreview MediaWebPage::toPreview(ToPreviewOptions options) const {
 	return { .text = notificationText() };
 }
 
-QString MediaWebPage::notificationText() const {
-	return parent()->originalText().text;
+TextWithEntities MediaWebPage::notificationText() const {
+	return parent()->originalText();
 }
 
 QString MediaWebPage::pinnedTextSubstring() const {
@@ -1374,7 +1363,7 @@ bool MediaGame::replyPreviewLoaded() const {
 	return true;
 }
 
-QString MediaGame::notificationText() const {
+TextWithEntities MediaGame::notificationText() const {
 	// Add a game controller emoji before game title.
 	auto result = QString();
 	result.reserve(_game->title.size() + 3);
@@ -1385,7 +1374,7 @@ QString MediaGame::notificationText() const {
 	).append(
 		QChar(' ')
 	).append(_game->title);
-	return result;
+	return { .text = result };
 }
 
 GameData *MediaGame::game() const {
@@ -1480,8 +1469,8 @@ bool MediaInvoice::replyPreviewLoaded() const {
 	return true;
 }
 
-QString MediaInvoice::notificationText() const {
-	return _invoice.title;
+TextWithEntities MediaInvoice::notificationText() const {
+	return { .text = _invoice.title };
 }
 
 QString MediaInvoice::pinnedTextSubstring() const {
@@ -1525,8 +1514,8 @@ PollData *MediaPoll::poll() const {
 	return _poll;
 }
 
-QString MediaPoll::notificationText() const {
-	return _poll->question;
+TextWithEntities MediaPoll::notificationText() const {
+	return Ui::Text::PlainLink(_poll->question);
 }
 
 QString MediaPoll::pinnedTextSubstring() const {
@@ -1600,16 +1589,16 @@ bool MediaDice::allowsRevoke(TimeId now) const {
 	return (now >= parent()->date() + kFastRevokeRestriction);
 }
 
-QString MediaDice::notificationText() const {
-	return _emoji;
+TextWithEntities MediaDice::notificationText() const {
+	return { .text = _emoji };
 }
 
 QString MediaDice::pinnedTextSubstring() const {
-	return QChar(171) + notificationText() + QChar(187);
+	return QChar(171) + notificationText().text + QChar(187);
 }
 
 TextForMimeData MediaDice::clipboardText() const {
-	return { notificationText() };
+	return { .rich = notificationText() };
 }
 
 bool MediaDice::forceForwardedInfo() const {

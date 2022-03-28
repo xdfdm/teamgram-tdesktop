@@ -169,8 +169,8 @@ void BackgroundSelector::updateThumbnail() {
 		int s = (pix.width() > pix.height()) ? pix.height() : pix.width();
 		p.drawImage(QRect(0, 0, size, size), pix, QRect(sx, sy, s, s));
 	}
-	Images::prepareRound(back, ImageRoundRadius::Small);
-	_thumbnail = Ui::PixmapFromImage(std::move(back));
+	_thumbnail = Ui::PixmapFromImage(
+		Images::Round(std::move(back), ImageRoundRadius::Small));
 	_thumbnail.setDevicePixelRatio(cRetinaFactor());
 	update();
 }
@@ -479,7 +479,7 @@ Fn<void()> SavePreparedTheme(
 	const auto api = &session->api();
 	const auto state = std::make_shared<State>();
 	state->id = FullMsgId(
-		0,
+		session->userPeerId(),
 		session->data().nextLocalMessageId());
 
 	const auto creating = !fields.id
@@ -655,7 +655,7 @@ void StartEditor(
 		? GenerateDefaultPalette()
 		: ParseTheme(object, true).palette;
 	if (palette.isEmpty() || !CopyColorsToPalette(path, palette, cloud)) {
-		window->show(Box<Ui::InformBox>(tr::lng_theme_editor_error(tr::now)));
+		window->show(Ui::MakeInformBox(tr::lng_theme_editor_error()));
 		return;
 	}
 	if (Core::App().settings().systemDarkModeEnabled()) {

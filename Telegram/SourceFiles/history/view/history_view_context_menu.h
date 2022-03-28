@@ -60,6 +60,19 @@ void AddPollActions(
 	not_null<PollData*> poll,
 	not_null<HistoryItem*> item,
 	Context context);
+void AddWhoReactedAction(
+	not_null<Ui::PopupMenu*> menu,
+	not_null<QWidget*> context,
+	not_null<HistoryItem*> item,
+	not_null<Window::SessionController*> controller);
+void ShowWhoReactedMenu(
+	not_null<base::unique_qptr<Ui::PopupMenu>*> menu,
+	QPoint position,
+	not_null<QWidget*> context,
+	not_null<HistoryItem*> item,
+	const QString &emoji,
+	not_null<Window::SessionController*> controller,
+	rpl::lifetime &lifetime);
 
 void ShowReportItemsBox(not_null<PeerData*> peer, MessageIdsList ids);
 void ShowReportPeerBox(

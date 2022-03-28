@@ -15,8 +15,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_keys.h"
 #include "ui/widgets/popup_menu.h"
 #include "data/data_peer.h"
+#include "data/data_session.h"
 #include "main/main_session.h"
+#include "history/history.h"
+#include "history/history_unread_things.h"
 #include "apiwrap.h"
+#include "styles/style_menu_icons.h"
 
 #include <QtWidgets/QApplication>
 
@@ -56,14 +60,18 @@ FillMenuResult FillSendMenu(
 	}
 
 	if (silent && now != Type::Reminder) {
-		menu->addAction(tr::lng_send_silent_message(tr::now), silent);
+		menu->addAction(
+			tr::lng_send_silent_message(tr::now),
+			silent,
+			&st::menuIconMute);
 	}
 	if (schedule && now != Type::SilentOnly) {
 		menu->addAction(
 			(now == Type::Reminder
 				? tr::lng_reminder_message(tr::now)
 				: tr::lng_schedule_message(tr::now)),
-			schedule);
+			schedule,
+			&st::menuIconSchedule);
 	}
 	return FillMenuResult::Success;
 }
@@ -78,7 +86,9 @@ void SetupMenuAndShortcuts(
 	}
 	const auto menu = std::make_shared<base::unique_qptr<Ui::PopupMenu>>();
 	const auto showMenu = [=] {
-		*menu = base::make_unique_q<Ui::PopupMenu>(button);
+		*menu = base::make_unique_q<Ui::PopupMenu>(
+			button,
+			st::popupMenuWithIcons);
 		const auto result = FillSendMenu(*menu, type(), silent, schedule);
 		const auto success = (result == FillMenuResult::Success);
 		if (success) {
@@ -136,9 +146,11 @@ void SetupMenuAndShortcuts(
 	}, button->lifetime());
 }
 
-void SetupUnreadMentionsMenu(
+void SetupReadAllMenu(
 		not_null<Ui::RpWidget*> button,
-		Fn<PeerData*()> currentPeer) {
+		Fn<PeerData*()> currentPeer,
+		const QString &text,
+		Fn<void(not_null<PeerData*>, Fn<void()>)> sendReadRequest) {
 	struct State {
 		base::unique_qptr<Ui::PopupMenu> menu;
 		base::flat_set<not_null<PeerData*>> sentForPeers;
@@ -149,21 +161,15 @@ void SetupUnreadMentionsMenu(
 		if (!peer) {
 			return;
 		}
-		state->menu = base::make_unique_q<Ui::PopupMenu>(button);
-		const auto text = tr::lng_context_mark_read_mentions_all(tr::now);
+		state->menu = base::make_unique_q<Ui::PopupMenu>(
+			button,
+			st::popupMenuWithIcons);
 		state->menu->addAction(text, [=] {
 			if (!state->sentForPeers.emplace(peer).second) {
 				return;
 			}
-			peer->session().api().request(MTPmessages_ReadMentions(
-				peer->input
-			)).done([=](const MTPmessages_AffectedHistory &result) {
-				state->sentForPeers.remove(peer);
-				peer->session().api().applyAffectedHistory(peer, result);
-			}).fail([=] {
-				state->sentForPeers.remove(peer);
-			}).send();
-		});
+			sendReadRequest(peer, [=] { state->sentForPeers.remove(peer); });
+		}, &st::menuIconMarkRead);
 		state->menu->popup(QCursor::pos());
 	};
 
@@ -174,7 +180,38 @@ void SetupUnreadMentionsMenu(
 		}
 		return base::EventFilterResult::Continue;
 	});
+}
 
+void SetupUnreadMentionsMenu(
+		not_null<Ui::RpWidget*> button,
+		Fn<PeerData*()> currentPeer) {
+	const auto text = tr::lng_context_mark_read_mentions_all(tr::now);
+	const auto sendRequest = [=](not_null<PeerData*> peer, Fn<void()> done) {
+		peer->session().api().request(MTPmessages_ReadMentions(
+			peer->input
+		)).done([=](const MTPmessages_AffectedHistory &result) {
+			done();
+			peer->session().api().applyAffectedHistory(peer, result);
+			peer->owner().history(peer)->unreadMentions().clear();
+		}).fail(done).send();
+	};
+	SetupReadAllMenu(button, currentPeer, text, sendRequest);
+}
+
+void SetupUnreadReactionsMenu(
+		not_null<Ui::RpWidget*> button,
+		Fn<PeerData*()> currentPeer) {
+	const auto text = tr::lng_context_mark_read_reactions_all(tr::now);
+	const auto sendRequest = [=](not_null<PeerData*> peer, Fn<void()> done) {
+		peer->session().api().request(MTPmessages_ReadReactions(
+			peer->input
+		)).done([=](const MTPmessages_AffectedHistory &result) {
+			done();
+			peer->session().api().applyAffectedHistory(peer, result);
+			peer->owner().history(peer)->unreadReactions().clear();
+		}).fail(done).send();
+	};
+	SetupReadAllMenu(button, currentPeer, text, sendRequest);
 }
 
 } // namespace SendMenu

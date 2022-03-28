@@ -9,6 +9,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "dialogs/dialogs_key.h"
 #include "data/data_messages.h"
+#include "ui/dragging_scroll_manager.h"
 #include "ui/effects/animations.h"
 #include "ui/rp_widget.h"
 #include "base/flags.h"
@@ -26,6 +27,7 @@ namespace Ui {
 class IconButton;
 class PopupMenu;
 class FlatLabel;
+struct ScrollToRequest;
 } // namespace Ui
 
 namespace Window {
@@ -46,6 +48,7 @@ struct ChosenRow {
 	Key key;
 	Data::MessagePosition message;
 	bool filteredRow = false;
+	bool newWindow = false;
 };
 
 enum class SearchRequestType {
@@ -63,7 +66,6 @@ enum class WidgetState {
 };
 
 class InnerWidget final : public Ui::RpWidget {
-	Q_OBJECT
 
 public:
 	InnerWidget(
@@ -95,7 +97,7 @@ public:
 	void refreshEmptyLabel();
 	void resizeEmptyLabel();
 
-	bool chooseRow();
+	bool chooseRow(Qt::KeyboardModifiers modifiers = {});
 
 	void scrollToEntry(const RowDescriptor &entry);
 
@@ -124,19 +126,20 @@ public:
 	[[nodiscard]] rpl::producer<ChosenRow> chosenRow() const;
 	[[nodiscard]] rpl::producer<> updated() const;
 
+	[[nodiscard]] rpl::producer<int> scrollByDeltaRequests() const;
+	[[nodiscard]] rpl::producer<Ui::ScrollToRequest> mustScrollTo() const;
+	[[nodiscard]] rpl::producer<Ui::ScrollToRequest> dialogMoved() const;
+	[[nodiscard]] rpl::producer<> searchMessages() const;
+	[[nodiscard]] rpl::producer<> cancelSearchInChatRequests() const;
+	[[nodiscard]] rpl::producer<QString> completeHashtagRequests() const;
+	[[nodiscard]] rpl::producer<> refreshHashtagsRequests() const;
+
+	[[nodiscard]] RowDescriptor resolveChatNext(RowDescriptor from = {}) const;
+	[[nodiscard]] RowDescriptor resolveChatPrevious(RowDescriptor from = {}) const;
+
 	~InnerWidget();
 
-public Q_SLOTS:
-	void onParentGeometryChanged();
-
-Q_SIGNALS:
-	void draggingScrollDelta(int delta);
-	void mustScrollTo(int scrollToTop, int scrollToBottom);
-	void dialogMoved(int movedFrom, int movedTo);
-	void searchMessages();
-	void cancelSearchInChat();
-	void completeHashtag(QString tag);
-	void refreshHashtags();
+	void parentGeometryChanged();
 
 protected:
 	void visibleTopBottomUpdated(
@@ -192,7 +195,10 @@ private:
 	void refreshDialogRow(RowDescriptor row);
 
 	void clearMouseSelection(bool clearSelection = false);
-	void mousePressReleased(QPoint globalPosition, Qt::MouseButton button);
+	void mousePressReleased(
+		QPoint globalPosition,
+		Qt::MouseButton button,
+		Qt::KeyboardModifiers modifiers);
 	void clearIrrelevantState();
 	void selectByMouse(QPoint globalPosition);
 	void loadPeerPhotos();
@@ -234,7 +240,7 @@ private:
 	void setupShortcuts();
 	RowDescriptor computeJump(
 		const RowDescriptor &to,
-		JumpSkip skip);
+		JumpSkip skip) const;
 	bool jumpToDialogRow(RowDescriptor to);
 
 	RowDescriptor chatListEntryBefore(const RowDescriptor &which) const;
@@ -394,6 +400,8 @@ private:
 	object_ptr<Ui::IconButton> _cancelSearchInChat;
 	object_ptr<Ui::IconButton> _cancelSearchFromUser;
 
+	Ui::DraggingScrollManager _draggingScroll;
+
 	Key _searchInChat;
 	History *_searchInMigrated = nullptr;
 	PeerData *_searchFromPeer = nullptr;
@@ -407,6 +415,12 @@ private:
 	rpl::event_stream<> _listBottomReached;
 	rpl::event_stream<ChosenRow> _chosenRow;
 	rpl::event_stream<> _updated;
+
+	rpl::event_stream<Ui::ScrollToRequest> _mustScrollTo;
+	rpl::event_stream<Ui::ScrollToRequest> _dialogMoved;
+	rpl::event_stream<> _searchMessages;
+	rpl::event_stream<QString> _completeHashtagRequests;
+	rpl::event_stream<> _refreshHashtagsRequests;
 
 	base::unique_qptr<Ui::PopupMenu> _menu;
 

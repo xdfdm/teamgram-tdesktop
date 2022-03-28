@@ -81,6 +81,10 @@ public:
 	bool customInfoLayout() const override {
 		return true;
 	}
+	QRect contentRectForReactions() const override;
+	std::optional<int> reactionButtonCenterOverride() const override;
+	QPoint resolveCustomInfoRightBottom() const override;
+
 	void stickerClearLoopPlayed() override {
 		_content->stickerClearLoopPlayed();
 	}

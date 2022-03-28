@@ -76,6 +76,7 @@ Q_DECLARE_METATYPE(MsgId);
 constexpr auto StartClientMsgId = MsgId(0x01 - (1LL << 58));
 constexpr auto EndClientMsgId = MsgId(-(1LL << 57));
 constexpr auto ServerMaxMsgId = MsgId(1LL << 56);
+constexpr auto ScheduledMsgIdsRange = (1LL << 32);
 constexpr auto ShowAtUnreadMsgId = MsgId(0);
 
 constexpr auto SpecialMsgIdShift = EndClientMsgId.bare;
@@ -122,9 +123,10 @@ struct MsgRange {
 
 struct FullMsgId {
 	constexpr FullMsgId() noexcept = default;
-	constexpr FullMsgId(ChannelId channel, MsgId msg) noexcept
-	: channel(channel), msg(msg) {
+	constexpr FullMsgId(PeerId peer, MsgId msg) noexcept
+	: peer(peer), msg(msg) {
 	}
+	FullMsgId(ChannelId channelId, MsgId msgId) = delete;
 
 	constexpr explicit operator bool() const noexcept {
 		return msg != 0;
@@ -133,16 +135,16 @@ struct FullMsgId {
 		return msg == 0;
 	}
 
-	ChannelId channel = NoChannel;
+	PeerId peer = 0;
 	MsgId msg = 0;
 };
 
 [[nodiscard]] inline constexpr bool operator<(
 		const FullMsgId &a,
 		const FullMsgId &b) noexcept {
-	if (a.channel < b.channel) {
+	if (a.peer < b.peer) {
 		return true;
-	} else if (a.channel > b.channel) {
+	} else if (a.peer > b.peer) {
 		return false;
 	}
 	return a.msg < b.msg;
@@ -169,7 +171,7 @@ struct FullMsgId {
 [[nodiscard]] inline constexpr bool operator==(
 		const FullMsgId &a,
 		const FullMsgId &b) noexcept {
-	return (a.channel == b.channel) && (a.msg == b.msg);
+	return (a.peer == b.peer) && (a.msg == b.msg);
 }
 
 [[nodiscard]] inline constexpr bool operator!=(
@@ -179,6 +181,60 @@ struct FullMsgId {
 }
 
 Q_DECLARE_METATYPE(FullMsgId);
+
+struct GlobalMsgId {
+	FullMsgId itemId;
+	uint64 sessionUniqueId = 0;
+
+	constexpr explicit operator bool() const noexcept {
+		return itemId && sessionUniqueId;
+	}
+	constexpr bool operator!() const noexcept {
+		return !itemId || !sessionUniqueId;
+	}
+};
+
+[[nodiscard]] inline constexpr bool operator<(
+		const GlobalMsgId &a,
+		const GlobalMsgId &b) noexcept {
+	if (a.itemId < b.itemId) {
+		return true;
+	} else if (a.itemId > b.itemId) {
+		return false;
+	}
+	return a.sessionUniqueId < b.sessionUniqueId;
+}
+
+[[nodiscard]] inline constexpr bool operator>(
+		const GlobalMsgId &a,
+		const GlobalMsgId &b) noexcept {
+	return b < a;
+}
+
+[[nodiscard]] inline constexpr bool operator<=(
+		const GlobalMsgId &a,
+		const GlobalMsgId &b) noexcept {
+	return !(b < a);
+}
+
+[[nodiscard]] inline constexpr bool operator>=(
+		const GlobalMsgId &a,
+		const GlobalMsgId &b) noexcept {
+	return !(a < b);
+}
+
+[[nodiscard]] inline constexpr bool operator==(
+		const GlobalMsgId &a,
+		const GlobalMsgId &b) noexcept {
+	return (a.itemId == b.itemId)
+		&& (a.sessionUniqueId == b.sessionUniqueId);
+}
+
+[[nodiscard]] inline constexpr bool operator!=(
+		const GlobalMsgId &a,
+		const GlobalMsgId &b) noexcept {
+	return !(a == b);
+}
 
 namespace std {
 

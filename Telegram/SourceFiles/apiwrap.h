@@ -67,6 +67,7 @@ class ConfirmPhone;
 class PeerPhoto;
 class Polls;
 class ChatParticipants;
+class UnreadThings;
 
 namespace details {
 
@@ -147,11 +148,7 @@ public:
 		bool archived,
 		Fn<void()> callback);
 
-	using RequestMessageDataCallback = Fn<void(ChannelData*, MsgId)>;
-	void requestMessageData(
-		ChannelData *channel,
-		MsgId msgId,
-		RequestMessageDataCallback callback);
+	void requestMessageData(PeerData *peer, MsgId msgId, Fn<void()> done);
 	QString exportDirectMessageLink(
 		not_null<HistoryItem*> item,
 		bool inRepliesContext);
@@ -199,7 +196,6 @@ public:
 		const QString &hash,
 		FnMut<void(const MTPChatInvite &)> done,
 		Fn<void(const MTP::Error &)> fail);
-	void importChatInvite(const QString &hash, bool isGroup);
 
 	void processFullPeer(
 		not_null<PeerData*> peer,
@@ -210,8 +206,9 @@ public:
 		FnMut<void(not_null<ChannelData*>)> done,
 		Fn<void(const QString &)> fail = nullptr);
 
-	void markMediaRead(const base::flat_set<not_null<HistoryItem*>> &items);
-	void markMediaRead(not_null<HistoryItem*> item);
+	void markContentsRead(
+		const base::flat_set<not_null<HistoryItem*>> &items);
+	void markContentsRead(not_null<HistoryItem*> item);
 
 	void deleteAllFromParticipant(
 		not_null<ChannelData*> channel,
@@ -253,11 +250,6 @@ public:
 	bool isQuitPrevent();
 
 	void jumpToDate(Dialogs::Key chat, const QDate &date);
-
-	void preloadEnoughUnreadMentions(not_null<History*> history);
-	void checkForUnreadMentions(
-		const base::flat_set<MsgId> &possiblyReadMentions,
-		ChannelData *channel = nullptr);
 
 	using SliceType = Data::LoadDirection;
 	void requestSharedMedia(
@@ -332,7 +324,8 @@ public:
 	void sendInlineResult(
 		not_null<UserData*> bot,
 		not_null<InlineBots::Result*> data,
-		const SendAction &action);
+		const SendAction &action,
+		std::optional<MsgId> localMessageId);
 	void sendMessageFail(
 		const MTP::Error &error,
 		not_null<PeerData*> peer,
@@ -360,12 +353,15 @@ public:
 	[[nodiscard]] Api::PeerPhoto &peerPhoto();
 	[[nodiscard]] Api::Polls &polls();
 	[[nodiscard]] Api::ChatParticipants &chatParticipants();
+	[[nodiscard]] Api::UnreadThings &unreadThings();
 
 	void updatePrivacyLastSeens();
 
+	static constexpr auto kJoinErrorDuration = 5 * crl::time(1000);
+
 private:
 	struct MessageDataRequest {
-		using Callbacks = std::vector<RequestMessageDataCallback>;
+		using Callbacks = std::vector<Fn<void()>>;
 
 		mtpRequestId requestId = 0;
 		Callbacks callbacks;
@@ -520,7 +516,7 @@ private:
 
 	MessageDataRequests _messageDataRequests;
 	base::flat_map<
-		ChannelData*,
+		not_null<ChannelData*>,
 		MessageDataRequests> _channelMessageDataRequests;
 	SingleQueuedInvokation _messageDataResolveDelayed;
 
@@ -565,8 +561,6 @@ private:
 
 	mtpRequestId _contactsRequestId = 0;
 	mtpRequestId _contactsStatusesRequestId = 0;
-
-	base::flat_map<not_null<History*>, mtpRequestId> _unreadMentionsRequests;
 
 	base::flat_set<std::tuple<
 		not_null<PeerData*>,
@@ -640,6 +634,7 @@ private:
 	const std::unique_ptr<Api::PeerPhoto> _peerPhoto;
 	const std::unique_ptr<Api::Polls> _polls;
 	const std::unique_ptr<Api::ChatParticipants> _chatParticipants;
+	const std::unique_ptr<Api::UnreadThings> _unreadThings;
 
 	mtpRequestId _wallPaperRequestId = 0;
 	QString _wallPaperSlug;

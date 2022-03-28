@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_scheduled_messages.h"
 #include "data/data_user.h"
+#include "data/data_message_reactions.h"
 #include "storage/storage_media_prepare.h"
 #include "storage/storage_account.h"
 #include "inline_bots/inline_bot_result.h"
@@ -615,8 +616,7 @@ void ScheduledWidget::edit(
 		}
 		return;
 	} else if (!left.text.isEmpty()) {
-		controller()->show(Box<Ui::InformBox>(
-			tr::lng_edit_too_long(tr::now)));
+		controller()->show(Ui::MakeInformBox(tr::lng_edit_too_long()));
 		return;
 	}
 
@@ -641,15 +641,13 @@ void ScheduledWidget::edit(
 
 		const auto &err = error.type();
 		if (ranges::contains(Api::kDefaultEditMessagesErrors, err)) {
-			controller()->show(Box<Ui::InformBox>(
-				tr::lng_edit_error(tr::now)));
+			controller()->show(Ui::MakeInformBox(tr::lng_edit_error()));
 		} else if (err == u"MESSAGE_NOT_MODIFIED"_q) {
 			_composeControls->cancelEditMessage();
 		} else if (err == u"MESSAGE_EMPTY"_q) {
 			_composeControls->focus();
 		} else {
-			controller()->show(Box<Ui::InformBox>(
-				tr::lng_edit_error(tr::now)));
+			controller()->show(Ui::MakeInformBox(tr::lng_edit_error()));
 		}
 		update();
 		return true;
@@ -684,7 +682,7 @@ bool ScheduledWidget::sendExistingDocument(
 		ChatRestriction::SendStickers);
 	if (error) {
 		controller()->show(
-			Box<Ui::InformBox>(*error),
+			Ui::MakeInformBox(*error),
 			Ui::LayerOption::KeepOther);
 		return false;
 	}
@@ -715,7 +713,7 @@ bool ScheduledWidget::sendExistingPhoto(
 		ChatRestriction::SendMedia);
 	if (error) {
 		controller()->show(
-			Box<Ui::InformBox>(*error),
+			Ui::MakeInformBox(*error),
 			Ui::LayerOption::KeepOther);
 		return false;
 	}
@@ -734,7 +732,7 @@ void ScheduledWidget::sendInlineResult(
 		not_null<UserData*> bot) {
 	const auto errorText = result->getErrorOnSend(_history);
 	if (!errorText.isEmpty()) {
-		controller()->show(Box<Ui::InformBox>(errorText));
+		controller()->show(Ui::MakeInformBox(errorText));
 		return;
 	}
 	const auto callback = [=](Api::SendOptions options) {
@@ -751,7 +749,7 @@ void ScheduledWidget::sendInlineResult(
 		Api::SendOptions options) {
 	auto action = prepareSendAction(options);
 	action.generateLocal = true;
-	session().api().sendInlineResult(bot, result, action);
+	session().api().sendInlineResult(bot, result, action, std::nullopt);
 
 	_composeControls->clear();
 	//_saveDraftText = true;
@@ -841,7 +839,7 @@ bool ScheduledWidget::showAtPositionNow(Data::MessagePosition position) {
 }
 
 void ScheduledWidget::updateScrollDownVisibility() {
-	if (animating()) {
+	if (animatingShow()) {
 		return;
 	}
 
@@ -905,7 +903,7 @@ not_null<History*> ScheduledWidget::history() const {
 Dialogs::RowDescriptor ScheduledWidget::activeChat() const {
 	return {
 		_history,
-		FullMsgId(_history->channelId(), ShowAtUnreadMsgId)
+		FullMsgId(_history->peer->id, ShowAtUnreadMsgId)
 	};
 }
 
@@ -1010,11 +1008,10 @@ void ScheduledWidget::updateControlsGeometry() {
 }
 
 void ScheduledWidget::paintEvent(QPaintEvent *e) {
-	if (animating()) {
+	if (animatingShow()) {
 		SectionWidget::paintEvent(e);
 		return;
-	}
-	if (Ui::skipPaintEvent(this, e)) {
+	} else if (Ui::skipPaintEvent(this, e)) {
 		return;
 	}
 	//if (hasPendingResizedItems()) {
@@ -1099,9 +1096,7 @@ rpl::producer<Data::MessagesSlice> ScheduledWidget::listSource(
 		int limitBefore,
 		int limitAfter) {
 	const auto data = &controller()->session().data();
-	return rpl::single(
-		rpl::empty_value()
-	) | rpl::then(
+	return rpl::single(rpl::empty) | rpl::then(
 		data->scheduledMessages().updates(_history)
 	) | rpl::map([=] {
 		return data->scheduledMessages().list(_history);
@@ -1239,6 +1234,12 @@ CopyRestrictionType ScheduledWidget::listCopyRestrictionType(
 
 CopyRestrictionType ScheduledWidget::listSelectRestrictionType() {
 	return CopyRestrictionType::None;
+}
+
+auto ScheduledWidget::listAllowedReactionsValue()
+-> rpl::producer<std::optional<base::flat_set<QString>>> {
+	const auto empty = base::flat_set<QString>();
+	return rpl::single(std::optional<base::flat_set<QString>>(empty));
 }
 
 void ScheduledWidget::confirmSendNowSelected() {

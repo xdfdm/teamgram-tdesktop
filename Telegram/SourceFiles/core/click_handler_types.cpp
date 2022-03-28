@@ -14,7 +14,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwindow.h"
 #include "main/main_session.h"
 #include "ui/boxes/confirm_box.h"
+#include "ui/text/text_entity.h"
+#include "ui/toast/toast.h"
 #include "base/qthelp_regex.h"
+#include "base/qt/qt_key_modifiers.h"
 #include "storage/storage_account.h"
 #include "history/history.h"
 #include "history/view/history_view_element.h"
@@ -22,9 +25,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_session.h"
 #include "window/window_session_controller.h"
+#include "boxes/abstract_box.h" // Ui::hideLayer().
 #include "facades.h"
-
-#include <QtGui/QGuiApplication>
 
 namespace {
 
@@ -60,7 +62,13 @@ bool UrlRequiresConfirmation(const QUrl &url) {
 	using namespace qthelp;
 
 	return !regex_match(
-		"(^|\\.)(telegram\\.(org|me|dog)|t\\.me|telegra\\.ph|telesco\\.pe)$",
+		"(^|\\.)("
+		"telegram\\.(org|me|dog)"
+		"|t\\.me"
+		"|te\\.?legra\\.ph"
+		"|graph\\.org"
+		"|telesco\\.pe"
+		")$",
 		url.host(),
 		RegExOption::CaseInsensitive);
 }
@@ -99,8 +107,7 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 		open();
 	} else {
 		const auto parsedUrl = QUrl::fromUserInput(url);
-		if (UrlRequiresConfirmation(parsedUrl)
-			&& QGuiApplication::keyboardModifiers() != Qt::ControlModifier) {
+		if (UrlRequiresConfirmation(parsedUrl) && !base::IsCtrlPressed()) {
 			Core::App().hideMediaView();
 			const auto displayed = parsedUrl.isValid()
 				? parsedUrl.toDisplayString()
@@ -111,12 +118,13 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 				? QString::fromUtf8(parsedUrl.toEncoded())
 				: ShowEncoded(displayed);
 			Ui::show(
-				Box<Ui::ConfirmBox>(
-					(tr::lng_open_this_link(tr::now)
+				Ui::MakeConfirmBox({
+					.text = (tr::lng_open_this_link(tr::now)
 						+ qsl("\n\n")
 						+ displayUrl),
-					tr::lng_open_link(tr::now),
-					[=] { Ui::hideLayer(); open(); }),
+					.confirmed = [=] { Ui::hideLayer(); open(); },
+					.confirmText = tr::lng_open_link(),
+				}),
 				Ui::LayerOption::KeepOther);
 		} else {
 			open();
@@ -145,10 +153,11 @@ void BotGameUrlClickHandler::onClick(ClickContext context) const {
 			bot->session().local().markBotTrustedOpenGame(bot->id);
 			open();
 		};
-		Ui::show(Box<Ui::ConfirmBox>(
-			tr::lng_allow_bot_pass(tr::now, lt_bot_name, _bot->name),
-			tr::lng_allow_bot(tr::now),
-			callback));
+		Ui::show(Ui::MakeConfirmBox({
+			.text = tr::lng_allow_bot_pass(tr::now, lt_bot_name, _bot->name),
+			.confirmed = callback,
+			.confirmText = tr::lng_allow_bot(),
+		}));
 	}
 }
 
@@ -265,4 +274,42 @@ void BotCommandClickHandler::onClick(ClickContext context) const {
 
 auto BotCommandClickHandler::getTextEntity() const -> TextEntity {
 	return { EntityType::BotCommand };
+}
+
+MonospaceClickHandler::MonospaceClickHandler(
+	const QString &text,
+	EntityType type)
+: _text(text)
+, _entity({ type }) {
+}
+
+void MonospaceClickHandler::onClick(ClickContext context) const {
+	const auto button = context.button;
+	if (button != Qt::LeftButton && button != Qt::MiddleButton) {
+		return;
+	}
+	const auto my = context.other.value<ClickHandlerContext>();
+	if (const auto controller = my.sessionWindow.get()) {
+		auto &data = controller->session().data();
+		const auto item = data.message(my.itemId);
+		const auto hasCopyRestriction = item
+			&& (!item->history()->peer->allowsForwarding()
+				|| item->forbidsForward());
+		if (hasCopyRestriction) {
+			Ui::Toast::Show(item->history()->peer->isBroadcast()
+				? tr::lng_error_nocopy_channel(tr::now)
+				: tr::lng_error_nocopy_group(tr::now));
+			return;
+		}
+	}
+	Ui::Toast::Show(tr::lng_text_copied(tr::now));
+	TextUtilities::SetClipboardText(TextForMimeData::Simple(_text.trimmed()));
+}
+
+auto MonospaceClickHandler::getTextEntity() const -> TextEntity {
+	return _entity;
+}
+
+QString MonospaceClickHandler::url() const {
+	return _text;
 }

@@ -100,6 +100,7 @@ parts:
       - libopus-dev
       - libpulse-dev
       - libssl-dev
+      - libwayland-dev
       - libxcb1-dev
       - libxcb-keysyms1-dev
       - libxcb-record0-dev
@@ -112,6 +113,7 @@ parts:
       - libopus0
       - libpulse0
       - libssl1.1
+      - libwayland-client0
       - libwebkit2gtk-4.0-37
       - libxcb1
       - libxcb-keysyms1
@@ -120,8 +122,11 @@ parts:
       - zlib1g
       - systemd
     cmake-parameters:
+      - -GNinja
       - -DCMAKE_BUILD_TYPE=Release
       - -DCMAKE_INSTALL_PREFIX=/usr
+      - -DJPEG_LIBRARY_RELEASE=$SNAPCRAFT_STAGE/usr/lib/$SNAPCRAFT_ARCH_TRIPLET/libjpeg.so
+      - -DJPEG_INCLUDE_DIR=$SNAPCRAFT_STAGE/usr/include
       - -DTDESKTOP_API_ID=611335
       - -DTDESKTOP_API_HASH=d524b414d21f4d37f08684c1df41ac9c
       - -DDESKTOP_APP_USE_PACKAGED_LAZY=ON
@@ -151,9 +156,7 @@ parts:
       - -./lib/systemd
     after:
       - desktop-qt
-      - extra-cmake-modules
       - ffmpeg
-      - kwayland
       - mozjpeg
       - openal
       - rnnoise
@@ -209,17 +212,6 @@ parts:
     after:
       - patches
 
-  extra-cmake-modules:
-    source: https://github.com/KDE/extra-cmake-modules.git
-    source-depth: 1
-    source-tag: v5.87.0
-    plugin: cmake
-    cmake-parameters:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DBUILD_TESTING=OFF
-    prime: [-./*]
-
   ffmpeg:
     plugin: nil
     build-packages:
@@ -239,43 +231,13 @@ parts:
     after:
       - mozjpeg
 
-  kwayland:
-    source: https://github.com/KDE/kwayland.git
-    source-depth: 1
-    source-tag: v5.87.0
-    plugin: cmake
-    build-packages:
-      - libwayland-dev
-      - wayland-protocols
-    stage-packages:
-      - libwayland-client0
-      - libwayland-server0
-    cmake-parameters:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DBUILD_TESTING=OFF
-    override-pull: |
-      snapcraftctl pull
-      patch -p1 < $SNAPCRAFT_STAGE/patches/kwayland-qt6.patch
-    prime:
-      - -./usr/include
-      - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/libexec
-      - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/pkgconfig
-      - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/*.so
-      - -./usr/mkspecs
-      - -./usr/share
-    after:
-      - extra-cmake-modules
-      - desktop-qt
-      - patches
-      - plasma-wayland-protocols
-
   mozjpeg:
     source: https://github.com/mozilla/mozjpeg.git
     source-depth: 1
     source-tag: v4.0.3
     plugin: cmake
     cmake-parameters:
+      - -GNinja
       - -DCMAKE_BUILD_TYPE=Release
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DENABLE_STATIC=OFF
@@ -300,6 +262,7 @@ parts:
       - libasound2
       - libpulse0
     cmake-parameters:
+      - -GNinja
       - -DCMAKE_BUILD_TYPE=Release
       - -DCMAKE_INSTALL_PREFIX=/usr
       - -DALSOFT_EXAMPLES=OFF
@@ -311,18 +274,6 @@ parts:
       - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/cmake
       - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/pkgconfig
       - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/libopenal.so
-
-  plasma-wayland-protocols:
-    source: https://github.com/KDE/plasma-wayland-protocols.git
-    source-depth: 1
-    source-tag: v1.4.0
-    plugin: cmake
-    cmake-parameters:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCMAKE_INSTALL_PREFIX=/usr
-    prime: [-./*]
-    after:
-      - extra-cmake-modules
 
   qt:
     plugin: nil
@@ -405,9 +356,9 @@ parts:
       - libxkbcommon-x11-0
       - zlib1g
     override-pull: |
-      QT=6_2_0
+      QT=6_2_3
 
-      git clone -b v6.2.0 --depth=1 git://code.qt.io/qt/qt5.git .
+      git clone -b v6.2.3 --depth=1 git://code.qt.io/qt/qt5.git .
       perl init-repository --module-subset=qtbase,qtwayland,qtimageformats,qtsvg,qt5compat
 
       cd qtbase
@@ -424,10 +375,15 @@ parts:
         -release \
         -opensource \
         -confirm-license \
+        -no-feature-getentropy \
+        -no-feature-renameat2 \
+        -no-feature-statx \
         -no-feature-highdpiscaling \
         -openssl-linked \
         -nomake examples \
-        -nomake tests
+        -nomake tests \
+        -- \
+        -DINPUT_egl_extension_platform_wayland=no
 
       cmake --build . -j$SNAPCRAFT_PARALLEL_BUILD_COUNT
       DESTDIR="$SNAPCRAFT_PART_INSTALL" cmake --install .
@@ -471,16 +427,40 @@ parts:
       - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/librnnoise.so
       - -./usr/share
 
+  vpx:
+    source: https://github.com/webmproject/libvpx.git
+    source-depth: 1
+    source-tag: v1.11.0
+    plugin: autotools
+    autotools-configure-parameters:
+      - --prefix=/usr
+      - --libdir=/usr/lib/$SNAPCRAFT_ARCH_TRIPLET
+      - --disable-examples
+      - --disable-unit-tests
+      - --disable-tools
+      - --disable-docs
+      - --enable-shared
+      - --disable-static
+      - --enable-vp8
+      - --enable-vp9
+      - --enable-webm-io
+    prime:
+      - -./usr/include
+      - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/pkgconfig
+      - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/libvpx.so
+
   webrtc:
     source: https://github.com/desktop-app/tg_owt.git
     source-depth: 1
-    source-commit: b02478677baac6d563589f216800ff9cea0fd65c
+    source-commit: d618d0b5ff3e59bea0143e6070481f8f4316a428
     plugin: cmake
     build-packages:
       - yasm
-      - libglib2.0-dev
+      #- libdrm-dev
+      #- libgbm-dev
+      #- libglib2.0-dev
       - libopus-dev
-      - libpipewire-0.2-dev
+      #- libpipewire-0.2-dev
       - libssl-dev
       - libx11-dev
       - libxcomposite-dev
@@ -491,9 +471,11 @@ parts:
       - libxrandr-dev
       - libxtst-dev
     stage-packages:
-      - libglib2.0-0
+      #- libdrm2
+      #- libgbm1
+      #- libglib2.0-0
       - libopus0
-      - libpipewire-0.2-1
+      #- libpipewire-0.2-1
       - libssl1.1
       - libx11-6
       - libxcomposite1
@@ -504,16 +486,18 @@ parts:
       - libxrandr2
       - libxtst6
     cmake-parameters:
+      - -GNinja
       - -DCMAKE_BUILD_TYPE=Release
       - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DBUILD_SHARED_LIBS=OFF
       - -DJPEG_LIBRARY_RELEASE=$SNAPCRAFT_STAGE/usr/lib/$SNAPCRAFT_ARCH_TRIPLET/libjpeg.so
       - -DJPEG_INCLUDE_DIR=$SNAPCRAFT_STAGE/usr/include
-      - -DTG_OWT_BUILD_AUDIO_BACKENDS=OFF
+      - -DTG_OWT_USE_PIPEWIRE=OFF
     prime:
       - -./usr/include
       - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/cmake
       - -./usr/lib/$SNAPCRAFT_ARCH_TRIPLET/*.a
     after:
+      #- epoxy
       - ffmpeg
       - mozjpeg
+      - vpx

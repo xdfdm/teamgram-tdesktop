@@ -14,6 +14,7 @@ include(cmake/generate_numbers.cmake)
 set(style_files
     ui/td_common.style
     ui/filter_icons.style
+    ui/menu_icons.style
     ui/chat/chat.style
     boxes/boxes.style
     dialogs/dialogs.style
@@ -61,6 +62,24 @@ PRIVATE
 
     countries/countries_instance.cpp
     countries/countries_instance.h
+
+    editor/controllers/undo_controller.cpp
+    editor/controllers/undo_controller.h
+    editor/editor_crop.cpp
+    editor/editor_crop.h
+    editor/photo_editor_common.cpp
+    editor/photo_editor_common.h
+    editor/photo_editor_inner_common.h
+    editor/scene/scene.cpp
+    editor/scene/scene.h
+    editor/scene/scene_item_base.cpp
+    editor/scene/scene_item_base.h
+    editor/scene/scene_item_canvas.cpp
+    editor/scene/scene_item_canvas.h
+    editor/scene/scene_item_image.cpp
+    editor/scene/scene_item_image.h
+    editor/scene/scene_item_line.cpp
+    editor/scene/scene_item_line.h
 
     layout/abstract_layout_item.cpp
     layout/abstract_layout_item.h
@@ -167,12 +186,14 @@ PRIVATE
     ui/chat/pinned_bar.h
     ui/chat/requests_bar.cpp
     ui/chat/requests_bar.h
-    ui/chat/select_scroll_manager.cpp
-    ui/chat/select_scroll_manager.h
     ui/controls/call_mute_button.cpp
     ui/controls/call_mute_button.h
+    ui/controls/chat_service_checkbox.cpp
+    ui/controls/chat_service_checkbox.h
     ui/controls/delete_message_context_action.cpp
     ui/controls/delete_message_context_action.h
+    ui/controls/download_bar.cpp
+    ui/controls/download_bar.h
     ui/controls/emoji_button.cpp
     ui/controls/emoji_button.h
     ui/controls/invite_link_buttons.cpp
@@ -183,8 +204,10 @@ PRIVATE
     ui/controls/send_as_button.h
     ui/controls/send_button.cpp
     ui/controls/send_button.h
-    ui/controls/who_read_context_action.cpp
-    ui/controls/who_read_context_action.h
+    ui/controls/who_reacted_context_action.cpp
+    ui/controls/who_reacted_context_action.h
+    ui/controls/window_outdated_bar.cpp
+    ui/controls/window_outdated_bar.h
     ui/text/format_song_name.cpp
     ui/text/format_song_name.h
     ui/text/format_values.cpp

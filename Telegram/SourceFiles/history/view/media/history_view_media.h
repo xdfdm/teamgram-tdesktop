@@ -205,6 +205,16 @@ public:
 	}
 	[[nodiscard]] virtual bool needsBubble() const = 0;
 	[[nodiscard]] virtual bool customInfoLayout() const = 0;
+	[[nodiscard]] virtual QRect contentRectForReactions() const {
+		return QRect(0, 0, width(), height());
+	}
+	[[nodiscard]] virtual auto reactionButtonCenterOverride() const
+	-> std::optional<int> {
+		return std::nullopt;
+	}
+	[[nodiscard]] virtual QPoint resolveCustomInfoRightBottom() const {
+		return QPoint();
+	}
 	[[nodiscard]] virtual QMargins bubbleMargins() const {
 		return QMargins();
 	}
@@ -303,6 +313,8 @@ protected:
 	}
 
 	[[nodiscard]] bool usesBubblePattern(const PaintContext &context) const;
+
+	void repaint() const;
 
 	const not_null<Element*> _parent;
 	MediaInBubbleState _inBubbleState = MediaInBubbleState::None;

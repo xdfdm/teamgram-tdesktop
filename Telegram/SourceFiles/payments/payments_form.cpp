@@ -147,7 +147,7 @@ Form::Form(not_null<PeerData*> peer, MsgId itemId, bool receipt)
 Form::~Form() = default;
 
 void Form::fillInvoiceFromMessage() {
-	const auto id = FullMsgId(peerToChannel(_peer->id), _msgId);
+	const auto id = FullMsgId(_peer->id, _msgId);
 	if (const auto item = _session->data().message(id)) {
 		const auto media = [&] {
 			if (const auto payment = item->Get<HistoryServicePayment>()) {
@@ -194,9 +194,7 @@ void Form::loadThumbnail(not_null<PhotoData*> photo) {
 		_invoice.cover.thumbnail = prepareEmptyThumbnail();
 	}
 	_thumbnailLoadProcess->view = std::move(view);
-	photo->load(
-		Data::PhotoSize::Thumbnail,
-		FullMsgId(peerToChannel(_peer->id), _msgId));
+	photo->load(Data::PhotoSize::Thumbnail, FullMsgId(_peer->id, _msgId));
 	_session->downloaderTaskFinished(
 	) | rpl::start_with_next([=] {
 		const auto &view = _thumbnailLoadProcess->view;
@@ -241,10 +239,10 @@ QImage Form::prepareThumbnail(
 		not_null<const Image*> image,
 		bool blurred) const {
 	auto result = image->original().scaled(
-		st::paymentsThumbnailSize * cIntRetinaFactor(),
+		st::paymentsThumbnailSize * style::DevicePixelRatio(),
 		Qt::KeepAspectRatio,
 		Qt::SmoothTransformation);
-	Images::prepareRound(result, ImageRoundRadius::Large);
+	result = Images::Round(std::move(result), ImageRoundRadius::Large);
 	result.setDevicePixelRatio(cRetinaFactor());
 	return result;
 }

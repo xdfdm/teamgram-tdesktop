@@ -26,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/special_buttons.h"
 #include "ui/special_fields.h"
 #include "ui/text/text_options.h"
+#include "ui/text/text_utilities.h"
 #include "ui/unread_badge.h"
 #include "ui/ui_utility.h"
 #include "data/data_channel.h"
@@ -112,16 +113,19 @@ style::InputField CreateBioFieldStyle() {
 	return result;
 }
 
-QString PeerFloodErrorText(
+TextWithEntities PeerFloodErrorText(
 		not_null<Main::Session*> session,
 		PeerFloodType type) {
-	const auto link = textcmdLink(
-		session->createInternalLinkFull(qsl("spambot")),
-		tr::lng_cant_more_info(tr::now));
-	if (type == PeerFloodType::InviteGroup) {
-		return tr::lng_cant_invite_not_contact(tr::now, lt_more_info, link);
-	}
-	return tr::lng_cant_send_to_not_contact(tr::now, lt_more_info, link);
+	const auto link = Ui::Text::Link(
+		tr::lng_cant_more_info(tr::now),
+		session->createInternalLinkFull(qsl("spambot")));
+	return ((type == PeerFloodType::InviteGroup)
+		? tr::lng_cant_invite_not_contact
+		: tr::lng_cant_send_to_not_contact)(
+			tr::now,
+			lt_more_info,
+			link,
+			Ui::Text::WithEntities);
 }
 
 void ShowAddParticipantsError(
@@ -157,16 +161,24 @@ void ShowAddParticipantsError(
 				*weak = Ui::show(std::move(box));
 			};
 			Ui::show(
-				Box<Ui::ConfirmBox>(
-					tr::lng_cant_invite_offer_admin(tr::now),
-					tr::lng_cant_invite_make_admin(tr::now),
-					tr::lng_cancel(tr::now),
-					makeAdmin),
+				Ui::MakeConfirmBox({
+					.text = tr::lng_cant_invite_offer_admin(),
+					.confirmed = makeAdmin,
+					.confirmText = tr::lng_cant_invite_make_admin(),
+				}),
 				Ui::LayerOption::KeepOther);
 			return;
 		}
 	}
 	const auto hasBot = ranges::any_of(users, &UserData::isBot);
+	if (error == u"PEER_FLOOD"_q) {
+		const auto type = (chat->isChat() || chat->isMegagroup())
+			? PeerFloodType::InviteGroup
+			: PeerFloodType::InviteChannel;
+		const auto text = PeerFloodErrorText(&chat->session(), type);
+		Ui::show(Ui::MakeInformBox(text), Ui::LayerOption::KeepOther);
+		return;
+	}
 	const auto text = [&] {
 		if (error == u"USER_BOT"_q) {
 			return tr::lng_cant_invite_bot_to_channel(tr::now);
@@ -184,11 +196,6 @@ void ShowAddParticipantsError(
 			return tr::lng_bot_already_in_group(tr::now);
 		} else if (error == u"BOT_GROUPS_BLOCKED"_q) {
 			return tr::lng_error_cant_add_bot(tr::now);
-		} else if (error == u"PEER_FLOOD"_q) {
-			const auto type = (chat->isChat() || chat->isMegagroup())
-				? PeerFloodType::InviteGroup
-				: PeerFloodType::InviteChannel;
-			return PeerFloodErrorText(&chat->session(), type);
 		} else if (error == u"ADMINS_TOO_MUCH"_q) {
 			return ((chat->isChat() || chat->isMegagroup())
 				? tr::lng_error_admin_limit
@@ -196,7 +203,7 @@ void ShowAddParticipantsError(
 		}
 		return tr::lng_failed_add_participant(tr::now);
 	}();
-	Ui::show(Box<Ui::InformBox>(text), Ui::LayerOption::KeepOther);
+	Ui::show(Ui::MakeInformBox(text), Ui::LayerOption::KeepOther);
 }
 
 class RevokePublicLinkBox::Inner : public TWidget {
@@ -418,32 +425,34 @@ void AddContactBox::save() {
 				MTP_string(lastName)))
 	)).done(crl::guard(this, [=](
 			const MTPcontacts_ImportedContacts &result) {
-		result.match([&](const MTPDcontacts_importedContacts &data) {
-			_session->data().processUsers(data.vusers());
-
-			const auto extractUser = [&](const MTPImportedContact &data) {
-				return data.match([&](const MTPDimportedContact &data) {
-					return (data.vclient_id().v == _contactId)
-						? _session->data().userLoaded(data.vuser_id())
-						: nullptr;
-				});
-			};
-			const auto &list = data.vimported().v;
-			const auto user = list.isEmpty()
-				? nullptr
-				: extractUser(list.front());
-			if (user) {
-				if (user->isContact() || user->session().supportMode()) {
-					Ui::showPeerHistory(user, ShowAtTheEndMsgId);
-				}
-				Ui::hideLayer();
-			} else if (isBoxShown()) {
-				hideChildren();
-				_retrying = true;
-				updateButtons();
-				update();
-			}
+		const auto &data = result.match([](
+				const auto &data) -> const MTPDcontacts_importedContacts& {
+			return data;
 		});
+		_session->data().processUsers(data.vusers());
+
+		const auto extractUser = [&](const MTPImportedContact &data) {
+			return data.match([&](const MTPDimportedContact &data) {
+				return (data.vclient_id().v == _contactId)
+					? _session->data().userLoaded(data.vuser_id())
+					: nullptr;
+			});
+		};
+		const auto &list = data.vimported().v;
+		const auto user = list.isEmpty()
+			? nullptr
+			: extractUser(list.front());
+		if (user) {
+			if (user->isContact() || user->session().supportMode()) {
+				Ui::showPeerHistory(user, ShowAtTheEndMsgId);
+			}
+			Ui::hideLayer();
+		} else if (isBoxShown()) {
+			hideChildren();
+			_retrying = true;
+			updateButtons();
+			update();
+		}
 	})).send();
 }
 
@@ -647,18 +656,18 @@ void GroupInfoBox::createGroup(
 			}
 		} else if (type == u"USERS_TOO_FEW"_q) {
 			controller->show(
-				Box<Ui::InformBox>(tr::lng_cant_invite_privacy(tr::now)),
+				Ui::MakeInformBox(tr::lng_cant_invite_privacy()),
 				Ui::LayerOption::KeepOther);
 		} else if (type == u"PEER_FLOOD"_q) {
 			controller->show(
-				Box<Ui::InformBox>(
+				Ui::MakeInformBox(
 					PeerFloodErrorText(
 						&_navigation->session(),
 						PeerFloodType::InviteGroup)),
 				Ui::LayerOption::KeepOther);
 		} else if (type == u"USER_RESTRICTED"_q) {
 			controller->show(
-				Box<Ui::InformBox>(tr::lng_cant_do_this(tr::now)),
+				Ui::MakeInformBox(tr::lng_cant_do_this()),
 				Ui::LayerOption::KeepOther);
 		}
 	}).send();
@@ -769,11 +778,11 @@ void GroupInfoBox::createChannel(
 			_title->showError();
 		} else if (type == u"USER_RESTRICTED"_q) {
 			controller->show(
-				Box<Ui::InformBox>(tr::lng_cant_do_this(tr::now)),
+				Ui::MakeInformBox(tr::lng_cant_do_this()),
 				Ui::LayerOption::CloseOther);
 		} else if (type == u"CHANNELS_TOO_MUCH"_q) {
 			controller->show(
-				Box<Ui::InformBox>(tr::lng_cant_do_this(tr::now)),
+				Ui::MakeInformBox(tr::lng_cant_do_this()),
 				Ui::LayerOption::CloseOther); // TODO
 		}
 	}).send();
@@ -869,14 +878,14 @@ SetupChannelBox::SetupChannelBox(
 	(channel->isMegagroup()
 		? tr::lng_create_public_group_about
 		: tr::lng_create_public_channel_about)(tr::now),
-	_defaultOptions,
+	kDefaultTextOptions,
 	_aboutPublicWidth)
 , _aboutPrivate(
 	st::defaultTextStyle,
 	(channel->isMegagroup()
 		? tr::lng_create_private_group_about
 		: tr::lng_create_private_channel_about)(tr::now),
-	_defaultOptions,
+	kDefaultTextOptions,
 	_aboutPublicWidth)
 , _link(
 	this,
@@ -1372,7 +1381,7 @@ void EditNameBox::prepare() {
 	newHeight += st::contactSkip + _last->height();
 
 	newHeight += st::boxPadding.bottom() + st::contactPadding.bottom();
-	setDimensions(st::boxWideWidth, newHeight);
+	setDimensions(st::boxWidth, newHeight);
 
 	addButton(tr::lng_settings_save(), [=] { save(); });
 	addButton(tr::lng_cancel(), [=] { closeBox(); });
@@ -1519,11 +1528,10 @@ RevokePublicLinkBox::Inner::Inner(
 					st::contactsNameStyle,
 					peer->name,
 					Ui::NameTextOptions());
-				row.status.setText(
+				row.status.setMarkedText(
 					st::defaultTextStyle,
 					_session->createInternalLink(
-						textcmdLink(1, peer->userName())),
-					Ui::DialogTextOptions());
+						Ui::Text::Link(peer->userName())));
 				_rows.push_back(std::move(row));
 			}
 		}
@@ -1641,7 +1649,11 @@ void RevokePublicLinkBox::Inner::mouseReleaseEvent(QMouseEvent *e) {
 			}).send();
 		});
 		Ui::show(
-			Box<Ui::ConfirmBox>(text, confirmText, std::move(callback)),
+			Ui::MakeConfirmBox({
+				.text = text,
+				.confirmed = std::move(callback),
+				.confirmText = confirmText,
+			}),
 			Ui::LayerOption::KeepOther);
 	}
 }

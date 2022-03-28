@@ -20,6 +20,8 @@ class SendFilesWay;
 struct PreparedFileInformation {
 	struct Image {
 		QImage data;
+		QByteArray bytes;
+		QByteArray format;
 		bool animated = false;
 		Editor::PhotoModifications modifications;
 	};
@@ -31,6 +33,7 @@ struct PreparedFileInformation {
 	};
 	struct Video {
 		bool isGifv = false;
+		bool isWebmSticker = false;
 		bool supportsStreaming = false;
 		int duration = -1;
 		QImage thumbnail;

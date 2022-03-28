@@ -29,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/chat/attach/attach_prepare.h"
 #include "ui/chat/attach/attach_send_files_way.h"
+#include "ui/effects/message_sending_animation_controller.h"
 #include "ui/special_buttons.h"
 #include "ui/ui_utility.h"
 #include "ui/toasts/common_toasts.h"
@@ -46,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "window/window_peer_menu.h"
 #include "base/event_filter.h"
 #include "base/call_delayed.h"
+#include "base/qt/qt_key_modifiers.h"
 #include "core/file_utilities.h"
 #include "main/main_session.h"
 #include "data/data_session.h"
@@ -53,6 +55,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_chat.h"
 #include "data/data_channel.h"
 #include "data/data_replies_list.h"
+#include "data/data_peer_values.h"
 #include "data/data_changes.h"
 #include "data/data_send_action.h"
 #include "storage/storage_media_prepare.h"
@@ -66,7 +69,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_boxes.h"
 
 #include <QtCore/QMimeData>
-#include <QtGui/QGuiApplication>
 
 namespace HistoryView {
 namespace {
@@ -90,11 +92,9 @@ rpl::producer<Ui::MessageBarContent> RootViewContent(
 		MsgId rootId) {
 	return MessageBarContentByItemId(
 		&history->session(),
-		FullMsgId{ history->channelId(), rootId }
+		FullMsgId(history->peer->id, rootId)
 	) | rpl::map([=](Ui::MessageBarContent &&content) {
-		const auto item = history->owner().message(
-			history->channelId(),
-			rootId);
+		const auto item = history->owner().message(history->peer, rootId);
 		if (!item) {
 			content.text = Ui::Text::Link(tr::lng_deleted_message(tr::now));
 		}
@@ -115,7 +115,7 @@ RepliesMemento::RepliesMemento(
 	if (commentId) {
 		_list.setAroundPosition({
 			.fullId = FullMsgId(
-				commentsItem->history()->channelId(),
+				commentsItem->history()->peer->id,
 				commentId),
 			.date = TimeId(0),
 		});
@@ -324,6 +324,7 @@ RepliesWidget::~RepliesWidget() {
 	_history->owner().sendActionManager().repliesPainterRemoved(
 		_history,
 		_rootId);
+	controller()->sendingAnimation().clear();
 }
 
 void RepliesWidget::orderWidgets() {
@@ -361,8 +362,7 @@ void RepliesWidget::sendReadTillRequest() {
 
 void RepliesWidget::setupRoot() {
 	if (!_root) {
-		const auto channel = _history->peer->asChannel();
-		const auto done = crl::guard(this, [=](ChannelData*, MsgId) {
+		const auto done = crl::guard(this, [=] {
 			_root = lookupRoot();
 			if (_root) {
 				_areComments = computeAreComments();
@@ -374,7 +374,10 @@ void RepliesWidget::setupRoot() {
 			}
 			updatePinnedVisibility();
 		});
-		_history->session().api().requestMessageData(channel, _rootId, done);
+		_history->session().api().requestMessageData(
+			_history->peer,
+			_rootId,
+			done);
 	}
 }
 
@@ -413,7 +416,7 @@ void RepliesWidget::setupRootView() {
 }
 
 HistoryItem *RepliesWidget::lookupRoot() const {
-	return _history->owner().message(_history->channelId(), _rootId);
+	return _history->owner().message(_history->peer, _rootId);
 }
 
 bool RepliesWidget::computeAreComments() const {
@@ -545,7 +548,12 @@ void RepliesWidget::setupComposeControls() {
 
 	_composeControls->fileChosen(
 	) | rpl::start_with_next([=](Selector::FileChosen chosen) {
-		sendExistingDocument(chosen.document, chosen.options);
+		controller()->sendingAnimation().appendSending(
+			chosen.messageSendingFrom);
+		sendExistingDocument(
+			chosen.document,
+			chosen.options,
+			chosen.messageSendingFrom.localId);
 	}, lifetime());
 
 	_composeControls->photoChosen(
@@ -555,7 +563,10 @@ void RepliesWidget::setupComposeControls() {
 
 	_composeControls->inlineResultChosen(
 	) | rpl::start_with_next([=](Selector::InlineChosen chosen) {
-		sendInlineResult(chosen.result, chosen.bot, chosen.options);
+		controller()->sendingAnimation().appendSending(
+			chosen.messageSendingFrom);
+		const auto localId = chosen.messageSendingFrom.localId;
+		sendInlineResult(chosen.result, chosen.bot, chosen.options, localId);
 	}, lifetime());
 
 	_composeControls->scrollRequests(
@@ -831,9 +842,7 @@ void RepliesWidget::restoreReplyReturns(const std::vector<MsgId> &list) {
 void RepliesWidget::computeCurrentReplyReturn() {
 	_replyReturn = _replyReturns.empty()
 		? nullptr
-		: _history->owner().message(
-			_history->channelId(),
-			_replyReturns.back());
+		: _history->owner().message(_history->peer, _replyReturns.back());
 }
 
 void RepliesWidget::calculateNextReplyReturn() {
@@ -1008,8 +1017,7 @@ void RepliesWidget::edit(
 		}
 		return;
 	} else if (!left.text.isEmpty()) {
-		controller()->show(Box<Ui::InformBox>(
-			tr::lng_edit_too_long(tr::now)));
+		controller()->show(Ui::MakeInformBox(tr::lng_edit_too_long()));
 		return;
 	}
 
@@ -1034,15 +1042,13 @@ void RepliesWidget::edit(
 
 		const auto &err = error.type();
 		if (ranges::contains(Api::kDefaultEditMessagesErrors, err)) {
-			controller()->show(Box<Ui::InformBox>(
-				tr::lng_edit_error(tr::now)));
+			controller()->show(Ui::MakeInformBox(tr::lng_edit_error()));
 		} else if (err == u"MESSAGE_NOT_MODIFIED"_q) {
 			_composeControls->cancelEditMessage();
 		} else if (err == u"MESSAGE_EMPTY"_q) {
 			doSetInnerFocus();
 		} else {
-			controller()->show(Box<Ui::InformBox>(
-				tr::lng_edit_error(tr::now)));
+			controller()->show(Ui::MakeInformBox(tr::lng_edit_error()));
 		}
 		update();
 		return true;
@@ -1061,7 +1067,7 @@ void RepliesWidget::edit(
 
 void RepliesWidget::sendExistingDocument(
 		not_null<DocumentData*> document) {
-	sendExistingDocument(document, {});
+	sendExistingDocument(document, {}, std::nullopt);
 	// #TODO replies schedule
 	//const auto callback = [=](Api::SendOptions options) {
 	//	sendExistingDocument(document, options);
@@ -1073,13 +1079,14 @@ void RepliesWidget::sendExistingDocument(
 
 bool RepliesWidget::sendExistingDocument(
 		not_null<DocumentData*> document,
-		Api::SendOptions options) {
+		Api::SendOptions options,
+		std::optional<MsgId> localId) {
 	const auto error = Data::RestrictionError(
 		_history->peer,
 		ChatRestriction::SendStickers);
 	if (error) {
 		controller()->show(
-			Box<Ui::InformBox>(*error),
+			Ui::MakeInformBox(*error),
 			Ui::LayerOption::KeepOther);
 		return false;
 	} else if (showSlowmodeError()) {
@@ -1088,7 +1095,8 @@ bool RepliesWidget::sendExistingDocument(
 
 	Api::SendExistingDocument(
 		Api::MessageToSend(prepareSendAction(options)),
-		document);
+		document,
+		localId);
 
 	_composeControls->cancelReplyMessage();
 	finishSending();
@@ -1114,7 +1122,7 @@ bool RepliesWidget::sendExistingPhoto(
 		ChatRestriction::SendMedia);
 	if (error) {
 		controller()->show(
-			Box<Ui::InformBox>(*error),
+			Ui::MakeInformBox(*error),
 			Ui::LayerOption::KeepOther);
 		return false;
 	} else if (showSlowmodeError()) {
@@ -1135,10 +1143,10 @@ void RepliesWidget::sendInlineResult(
 		not_null<UserData*> bot) {
 	const auto errorText = result->getErrorOnSend(_history);
 	if (!errorText.isEmpty()) {
-		controller()->show(Box<Ui::InformBox>(errorText));
+		controller()->show(Ui::MakeInformBox(errorText));
 		return;
 	}
-	sendInlineResult(result, bot, {});
+	sendInlineResult(result, bot, {}, std::nullopt);
 	//const auto callback = [=](Api::SendOptions options) {
 	//	sendInlineResult(result, bot, options);
 	//};
@@ -1150,10 +1158,11 @@ void RepliesWidget::sendInlineResult(
 void RepliesWidget::sendInlineResult(
 		not_null<InlineBots::Result*> result,
 		not_null<UserData*> bot,
-		Api::SendOptions options) {
+		Api::SendOptions options,
+		std::optional<MsgId> localMessageId) {
 	auto action = prepareSendAction(options);
 	action.generateLocal = true;
-	session().api().sendInlineResult(bot, result, action);
+	session().api().sendInlineResult(bot, result, action, localMessageId);
 
 	_composeControls->clear();
 	//_saveDraftText = true;
@@ -1266,7 +1275,7 @@ void RepliesWidget::reloadUnreadCountIfNeeded() {
 }
 
 void RepliesWidget::scrollDownClicked() {
-	if (QGuiApplication::keyboardModifiers() == Qt::ControlModifier) {
+	if (base::IsCtrlPressed()) {
 		showAtEnd();
 	} else if (_replyReturn) {
 		showAtPosition(_replyReturn->position());
@@ -1345,7 +1354,7 @@ bool RepliesWidget::showAtPositionNow(
 }
 
 void RepliesWidget::updateScrollDownVisibility() {
-	if (animating()) {
+	if (animatingShow()) {
 		return;
 	}
 
@@ -1408,7 +1417,7 @@ not_null<History*> RepliesWidget::history() const {
 Dialogs::RowDescriptor RepliesWidget::activeChat() const {
 	return {
 		_history,
-		FullMsgId(_history->channelId(), ShowAtUnreadMsgId)
+		FullMsgId(_history->peer->id, ShowAtUnreadMsgId)
 	};
 }
 
@@ -1478,10 +1487,7 @@ bool RepliesWidget::showMessage(
 	if (peerId != _history->peer->id) {
 		return false;
 	}
-	const auto id = FullMsgId{
-		_history->channelId(),
-		messageId
-	};
+	const auto id = FullMsgId(_history->peer->id, messageId);
 	const auto message = _history->owner().message(id);
 	if (!message || message->replyToTop() != _rootId) {
 		return false;
@@ -1558,7 +1564,7 @@ void RepliesWidget::restoreState(not_null<RepliesMemento*> memento) {
 	_inner->restoreState(memento->list());
 	if (const auto highlight = memento->getHighlightId()) {
 		const auto position = Data::MessagePosition{
-			.fullId = FullMsgId(_history->channelId(), highlight),
+			.fullId = FullMsgId(_history->peer->id, highlight),
 			.date = TimeId(0),
 		};
 		_inner->showAroundPosition(position, [=] {
@@ -1621,7 +1627,7 @@ void RepliesWidget::updateControlsGeometry() {
 }
 
 void RepliesWidget::paintEvent(QPaintEvent *e) {
-	if (animating()) {
+	if (animatingShow()) {
 		SectionWidget::paintEvent(e);
 		return;
 	} else if (Ui::skipPaintEvent(this, e)) {
@@ -1671,28 +1677,28 @@ void RepliesWidget::updatePinnedVisibility() {
 }
 
 void RepliesWidget::setPinnedVisibility(bool shown) {
-	if (!animating()) {
-		if (!_rootViewInited) {
-			const auto height = shown ? st::historyReplyHeight : 0;
-			if (const auto delta = height - _rootViewHeight) {
-				_rootViewHeight = height;
-				if (_scroll->scrollTop() == _scroll->scrollTopMax()) {
-					setGeometryWithTopMoved(geometry(), delta);
-				} else {
-					updateControlsGeometry();
-				}
-			}
-			if (shown) {
-				_rootView->show();
+	if (animatingShow()) {
+		return;
+	} else if (!_rootViewInited) {
+		const auto height = shown ? st::historyReplyHeight : 0;
+		if (const auto delta = height - _rootViewHeight) {
+			_rootViewHeight = height;
+			if (_scroll->scrollTop() == _scroll->scrollTopMax()) {
+				setGeometryWithTopMoved(geometry(), delta);
 			} else {
-				_rootView->hide();
+				updateControlsGeometry();
 			}
-			_rootVisible = shown;
-			_rootView->finishAnimating();
-			_rootViewInited = true;
-		} else {
-			_rootVisible = shown;
 		}
+		if (shown) {
+			_rootView->show();
+		} else {
+			_rootView->hide();
+		}
+		_rootVisible = shown;
+		_rootView->finishAnimating();
+		_rootViewInited = true;
+	} else {
+		_rootVisible = shown;
 	}
 }
 
@@ -1928,6 +1934,11 @@ CopyRestrictionType RepliesWidget::listCopyRestrictionType(
 
 CopyRestrictionType RepliesWidget::listSelectRestrictionType() {
 	return SelectRestrictionTypeFor(_history->peer);
+}
+
+auto RepliesWidget::listAllowedReactionsValue()
+-> rpl::producer<std::optional<base::flat_set<QString>>> {
+	return Data::PeerAllowedReactionsValue(_history->peer);
 }
 
 void RepliesWidget::confirmDeleteSelected() {

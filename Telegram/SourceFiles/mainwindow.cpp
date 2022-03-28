@@ -184,22 +184,12 @@ void MainWindow::applyInitialWorkMode() {
 		|| (cLaunchMode() == LaunchModeAutoStart
 			&& cStartMinimized()
 			&& !Core::App().passcodeLocked())) {
-		const auto minimizeAndHide = [=] {
-			DEBUG_LOG(("Window Pos: First show, setting minimized after."));
-			setWindowState(windowState() | Qt::WindowMinimized);
-			if (workMode == Core::Settings::WorkMode::TrayOnly
-				|| workMode == Core::Settings::WorkMode::WindowAndTray) {
-				hide();
-			}
-		};
-
-		if (Platform::IsLinux()) {
-			// If I call hide() synchronously here after show() then on Ubuntu 14.04
-			// it will show a window frame with transparent window body, without content.
-			// And to be able to "Show from tray" one more hide() will be required.
-			crl::on_main(this, minimizeAndHide);
+		DEBUG_LOG(("Window Pos: First show, setting minimized after."));
+		if (workMode == Core::Settings::WorkMode::TrayOnly
+			|| workMode == Core::Settings::WorkMode::WindowAndTray) {
+			hide();
 		} else {
-			minimizeAndHide();
+			setWindowState(windowState() | Qt::WindowMinimized);
 		}
 	}
 	setPositionInited();
@@ -252,7 +242,7 @@ void MainWindow::setupPasscodeLock() {
 	updateControlsGeometry();
 
 	Core::App().hideMediaView();
-	Ui::hideSettingsAndLayer(anim::type::instant);
+	ui_hideSettingsAndLayer(anim::type::instant);
 	if (_main) {
 		_main->hide();
 	}
@@ -319,7 +309,7 @@ void MainWindow::setupIntro(Intro::EnterPoint point) {
 	fixOrder();
 }
 
-void MainWindow::setupMain() {
+void MainWindow::setupMain(MsgId singlePeerShowAtMsgId) {
 	Expects(account().sessionExists());
 
 	const auto animated = _intro
@@ -337,6 +327,12 @@ void MainWindow::setupMain() {
 	auto created = object_ptr<MainWidget>(bodyWidget(), sessionController());
 	clearWidgets();
 	_main = std::move(created);
+	if (const auto peer = singlePeer()) {
+		_main->controller()->showPeerHistory(
+			peer,
+			Window::SectionShow::Way::ClearStack,
+			singlePeerShowAtMsgId);
+	}
 	if (_passcodeLock) {
 		_main->hide();
 	} else {
@@ -590,11 +586,11 @@ bool MainWindow::doWeMarkAsRead() {
 	if (!_main || Ui::isLayerShown()) {
 		return false;
 	}
-	updateIsActive();
 	return isActive() && _main->doWeMarkAsRead();
 }
 
 void MainWindow::checkHistoryActivation() {
+	updateIsActive();
 	if (_main) {
 		_main->checkHistoryActivation();
 	}
@@ -624,11 +620,20 @@ bool MainWindow::eventFilter(QObject *object, QEvent *e) {
 	switch (e->type()) {
 	case QEvent::KeyPress: {
 		if (Logs::DebugEnabled()
-			&& (e->type() == QEvent::KeyPress)
 			&& object == windowHandle()) {
-			auto key = static_cast<QKeyEvent*>(e)->key();
+			const auto key = static_cast<QKeyEvent*>(e)->key();
 			FeedLangTestingKey(key);
 		}
+#ifdef _DEBUG
+		switch (static_cast<QKeyEvent*>(e)->key()) {
+		case Qt::Key_F3:
+			anim::SetSlowMultiplier((anim::SlowMultiplier() == 10) ? 1 : 10);
+			return true;
+		case Qt::Key_F4:
+			anim::SetSlowMultiplier((anim::SlowMultiplier() == 50) ? 1 : 50);
+			return true;
+		}
+#endif
 	} break;
 
 	case QEvent::MouseMove: {
@@ -728,7 +733,7 @@ bool MainWindow::skipTrayClick() const {
 void MainWindow::toggleDisplayNotifyFromTray() {
 	if (controller().locked()) {
 		if (!isActive()) showFromTray();
-		Ui::show(Box<Ui::InformBox>(tr::lng_passcode_need_unblock(tr::now)));
+		Ui::show(Ui::MakeInformBox(tr::lng_passcode_need_unblock()));
 		return;
 	}
 	if (!sessionController()) {
@@ -781,9 +786,9 @@ void MainWindow::toggleDisplayNotifyFromTray() {
 }
 
 void MainWindow::closeEvent(QCloseEvent *e) {
-	if (Core::Sandbox::Instance().isSavingSession()) {
+	if (Core::Sandbox::Instance().isSavingSession() || Core::Quitting()) {
 		e->accept();
-		App::quit();
+		Core::Quit();
 	} else {
 		e->ignore();
 		const auto hasAuth = [&] {
@@ -798,7 +803,7 @@ void MainWindow::closeEvent(QCloseEvent *e) {
 			return false;
 		}();
 		if (!hasAuth || !hideNoQuit()) {
-			App::quit();
+			Core::Quit();
 		}
 	}
 }
@@ -836,7 +841,7 @@ void MainWindow::sendPaths() {
 		return;
 	}
 	Core::App().hideMediaView();
-	Ui::hideSettingsAndLayer(anim::type::instant);
+	ui_hideSettingsAndLayer(anim::type::instant);
 	if (_main) {
 		_main->activate();
 	}
@@ -856,8 +861,8 @@ MainWindow::~MainWindow() {
 namespace App {
 
 MainWindow *wnd() {
-	return (Core::IsAppLaunched() && Core::App().activeWindow())
-		? Core::App().activeWindow()->widget().get()
+	return (Core::IsAppLaunched() && Core::App().primaryWindow())
+		? Core::App().primaryWindow()->widget().get()
 		: nullptr;
 }
 

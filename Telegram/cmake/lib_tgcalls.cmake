@@ -73,8 +73,14 @@ PRIVATE
     desktop_capturer/DesktopCaptureSourceManager.cpp
 
     # Group calls
+    group/AVIOContextImpl.cpp
+    group/AVIOContextImpl.h
     group/AudioStreamingPart.cpp
     group/AudioStreamingPart.h
+    group/AudioStreamingPartInternal.cpp
+    group/AudioStreamingPartInternal.h
+    group/AudioStreamingPartPersistentDecoder.cpp
+    group/AudioStreamingPartPersistentDecoder.h
     group/GroupInstanceCustomImpl.cpp
     group/GroupInstanceCustomImpl.h
     group/GroupInstanceImpl.h
@@ -101,6 +107,8 @@ PRIVATE
     platform/android/VideoCapturerInterfaceImpl.h
 
     # iOS / macOS
+    platform/darwin/CustomSimulcastEncoderAdapter.cpp
+    platform/darwin/CustomSimulcastEncoderAdapter.h
     platform/darwin/DarwinInterface.h
     platform/darwin/DarwinInterface.mm
     platform/darwin/DarwinVideoSource.h
@@ -167,6 +175,7 @@ target_link_libraries(lib_tgcalls
 PRIVATE
     desktop-app::external_webrtc
     desktop-app::external_ffmpeg
+    desktop-app::external_openssl
     desktop-app::external_rnnoise
 )
 

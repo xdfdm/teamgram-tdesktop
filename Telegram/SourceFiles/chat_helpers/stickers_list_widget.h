@@ -39,6 +39,11 @@ class DocumentMedia;
 class StickersSet;
 } // namespace Data
 
+namespace Media::Clip {
+class ReaderPointer;
+enum class Notification;
+} // namespace Media::Clip
+
 namespace ChatHelpers {
 
 struct StickerIcon;
@@ -113,6 +118,8 @@ protected:
 
 private:
 	class Footer;
+	struct Sticker;
+	struct Set;
 
 	enum class Section {
 		Featured,
@@ -178,43 +185,6 @@ private:
 		int rowsBottom = 0;
 	};
 
-	struct Sticker {
-		not_null<DocumentData*> document;
-		std::shared_ptr<Data::DocumentMedia> documentMedia;
-		Lottie::Animation *animated = nullptr;
-		QPixmap savedFrame;
-
-		void ensureMediaCreated();
-	};
-
-	struct Set {
-		Set(
-			uint64 id,
-			Data::StickersSet *set,
-			Data::StickersSetFlags flags,
-			const QString &title,
-			const QString &shortName,
-			int count,
-			bool externalLayout,
-			std::vector<Sticker> &&stickers = {});
-		Set(Set &&other);
-		Set &operator=(Set &&other);
-		~Set();
-
-		uint64 id = 0;
-		Data::StickersSet *set = nullptr;
-		Data::StickersSetFlags flags;
-		QString title;
-		QString shortName;
-		std::vector<Sticker> stickers;
-		std::unique_ptr<Ui::RippleAnimation> ripple;
-
-		std::unique_ptr<Lottie::MultiPlayer> lottiePlayer;
-		rpl::lifetime lottieLifetime;
-
-		int count = 0;
-		bool externalLayout = false;
-	};
 	struct FeaturedSet {
 		uint64 id = 0;
 		Data::StickersSetFlags flags;
@@ -279,11 +249,27 @@ private:
 
 	void paintStickers(Painter &p, QRect clip);
 	void paintMegagroupEmptySet(Painter &p, int y, bool buttonSelected);
-	void paintSticker(Painter &p, Set &set, int y, int section, int index, bool selected, bool deleteSelected);
+	void paintSticker(
+		Painter &p,
+		Set &set,
+		int y,
+		int section,
+		int index,
+		crl::time now,
+		bool paused,
+		bool selected,
+		bool deleteSelected);
 	void paintEmptySearchResults(Painter &p);
 
 	void ensureLottiePlayer(Set &set);
 	void setupLottie(Set &set, int section, int index);
+	void setupWebm(Set &set, int section, int index);
+	void clipCallback(
+		Media::Clip::Notification notification,
+		uint64 setId,
+		not_null<DocumentData*> document,
+		int indexHint);
+	[[nodiscard]] bool itemVisible(const SectionInfo &info, int index) const;
 	void markLottieFrameShown(Set &set);
 	void checkVisibleLottie();
 	void pauseInvisibleLottieIn(const SectionInfo &info);
@@ -292,6 +278,13 @@ private:
 	void takeHeavyData(Sticker &to, Sticker &from);
 	void clearHeavyIn(Set &set, bool clearSavedFrames = true);
 	void clearHeavyData();
+	void updateItems();
+	void updateSets();
+	void repaintItems(crl::time now = 0);
+	void updateSet(const SectionInfo &info);
+	void repaintItems(
+		const SectionInfo &info,
+		crl::time now);
 
 	int stickersRight() const;
 	bool featuredHasAddButton(int index) const;
@@ -302,8 +295,8 @@ private:
 	void refreshMegagroupSetGeometry();
 	QRect megagroupSetButtonRectFinal() const;
 
-	const Data::StickersSetsOrder &defaultSetsOrder() const;
-	Data::StickersSetsOrder &defaultSetsOrderRef();
+	[[nodiscard]] const Data::StickersSetsOrder &defaultSetsOrder() const;
+	[[nodiscard]] Data::StickersSetsOrder &defaultSetsOrderRef();
 
 	enum class AppendSkip {
 		None,
@@ -316,7 +309,6 @@ private:
 		bool externalLayout,
 		AppendSkip skip = AppendSkip::None);
 
-	void selectEmoji(EmojiPtr emoji);
 	int stickersLeft() const;
 	QRect stickerRect(int section, int sel);
 
@@ -338,6 +330,11 @@ private:
 
 	void showPreview();
 
+	Ui::MessageSendingAnimationFrom messageSentAnimationInfo(
+		int section,
+		int index,
+		not_null<DocumentData*> document);
+
 	MTP::Sender _api;
 	ChannelData *_megagroupSet = nullptr;
 	uint64 _megagroupSetIdRequested = 0;
@@ -350,11 +347,18 @@ private:
 	base::flat_set<not_null<DocumentData*>> _favedStickersMap;
 	std::weak_ptr<Lottie::FrameRenderer> _lottieRenderer;
 
+	crl::time _lastScrolledAt = 0;
+	crl::time _lastFullUpdatedAt = 0;
+
 	mtpRequestId _officialRequestId = 0;
 	int _officialOffset = 0;
 
 	Section _section = Section::Stickers;
 	const bool _isMasks;
+
+	base::Timer _updateItemsTimer;
+	base::Timer _updateSetsTimer;
+	base::flat_set<uint64> _repaintSetsIds;
 
 	bool _displayingSet = false;
 	uint64 _removingSetId = 0;

@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/peers/edit_peer_invite_links.h"
 #include "boxes/peers/edit_linked_chat_box.h"
 #include "boxes/peers/edit_peer_requests_box.h"
+#include "boxes/peers/edit_peer_reactions.h"
 #include "boxes/stickers_box.h"
 #include "ui/boxes/single_choice_box.h"
 #include "chat_helpers/emoji_suggestions_widget.h"
@@ -31,6 +32,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_peer.h"
 #include "data/data_session.h"
 #include "data/data_changes.h"
+#include "data/data_message_reactions.h"
+#include "data/data_peer_values.h"
 #include "history/admin_log/history_admin_log_section.h"
 #include "info/profile/info_profile_values.h"
 #include "lang/lang_keys.h"
@@ -288,7 +291,8 @@ private:
 	object_ptr<Ui::RpWidget> createManageGroupButtons();
 	object_ptr<Ui::RpWidget> createStickersEdit();
 
-	bool canEditInformation() const;
+	[[nodiscard]] bool canEditInformation() const;
+	[[nodiscard]] bool canEditReactions() const;
 	void refreshHistoryVisibility();
 	void showEditPeerTypeBox(
 		std::optional<rpl::producer<QString>> error = {});
@@ -592,6 +596,17 @@ bool Controller::canEditInformation() const {
 		return channel->canEditInformation();
 	} else if (const auto chat = _peer->asChat()) {
 		return chat->canEditInformation();
+	}
+	return false;
+}
+
+bool Controller::canEditReactions() const {
+	if (const auto channel = _peer->asChannel()) {
+		return channel->amCreator()
+			|| (channel->adminRights() & ChatAdminRight::ChangeInfo);
+	} else if (const auto chat = _peer->asChat()) {
+		return chat->amCreator()
+			|| (chat->adminRights() & ChatAdminRight::ChangeInfo);
 	}
 	return false;
 }
@@ -1016,6 +1031,40 @@ void Controller::fillManageSection() {
 					anim::type::instant);
 			}, wrap->lifetime());
 		}
+	}
+	if (canEditReactions()) {
+		const auto session = &_peer->session();
+		auto reactionsCount = Info::Profile::MigratedOrMeValue(
+			_peer
+		) | rpl::map(
+			Info::Profile::AllowedReactionsCountValue
+		) | rpl::flatten_latest();
+		auto fullCount = Info::Profile::FullReactionsCountValue(session);
+		auto label = rpl::combine(
+			std::move(reactionsCount),
+			std::move(fullCount)
+		) | rpl::map([=](int allowed, int total) {
+			return allowed
+				? QString::number(allowed) + " / " + QString::number(total)
+				: tr::lng_manage_peer_reactions_off(tr::now);
+		});
+		const auto done = [=](const std::vector<QString> &chosen) {
+			SaveAllowedReactions(_peer, chosen);
+		};
+		AddButtonWithCount(
+			_controls.buttonsLayout,
+			tr::lng_manage_peer_reactions(),
+			std::move(label),
+			[=] {
+				_navigation->parentController()->show(Box(
+					EditAllowedReactionsBox,
+					!_peer->isBroadcast(),
+					session->data().reactions().list(
+						Data::Reactions::Type::Active),
+					*Data::PeerAllowedReactions(_peer),
+					done));
+			},
+			st::infoIconReactions);
 	}
 	if (canViewAdmins) {
 		AddButtonWithCount(
@@ -1557,11 +1606,12 @@ void Controller::deleteWithConfirmation() {
 		deleteChannel();
 	});
 	_navigation->parentController()->show(
-		Box<Ui::ConfirmBox>(
-			text,
-			tr::lng_box_delete(tr::now),
-			st::attentionBoxButton,
-			deleteCallback),
+		Ui::MakeConfirmBox({
+			.text = text,
+			.confirmed = deleteCallback,
+			.confirmText = tr::lng_box_delete(),
+			.confirmStyle = &st::attentionBoxButton,
+		}),
 		Ui::LayerOption::KeepOther);
 }
 
@@ -1644,8 +1694,8 @@ object_ptr<Ui::SettingsButton> EditPeerInfoBox::CreateButton(
 	) | rpl::map([&st](const QString &text, const QString &count, int width) {
 		const auto available = width
 			- st.button.padding.left()
-			- (st.button.font->spacew * 2)
-			- st.button.font->width(text)
+			- (st.button.style.font->spacew * 2)
+			- st.button.style.font->width(text)
 			- st.labelPosition.x();
 		const auto required = st.label.style.font->width(count);
 		return (required > available)

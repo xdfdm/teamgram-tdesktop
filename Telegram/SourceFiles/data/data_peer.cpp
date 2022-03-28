@@ -320,7 +320,11 @@ void PeerData::paintUserpic(
 		int y,
 		int size) const {
 	if (const auto userpic = currentUserpic(view)) {
-		p.drawPixmap(x, y, userpic->pixCircled(size, size));
+		const auto circled = Images::Option::RoundCircle;
+		p.drawPixmap(
+			x,
+			y,
+			userpic->pix(size, size, { .options = circled }));
 	} else {
 		ensureEmptyUserpic()->paint(p, x, y, x + size + x, size);
 	}
@@ -380,10 +384,14 @@ QPixmap PeerData::genUserpic(
 		std::shared_ptr<Data::CloudImageView> &view,
 		int size) const {
 	if (const auto userpic = currentUserpic(view)) {
-		return userpic->pixCircled(size, size);
+		const auto circle = Images::Option::RoundCircle;
+		return userpic->pix(size, size, { .options = circle });
 	}
-	auto result = QImage(QSize(size, size) * cIntRetinaFactor(), QImage::Format_ARGB32_Premultiplied);
-	result.setDevicePixelRatio(cRetinaFactor());
+	const auto ratio = style::DevicePixelRatio();
+	auto result = QImage(
+		QSize(size, size) * ratio,
+		QImage::Format_ARGB32_Premultiplied);
+	result.setDevicePixelRatio(ratio);
 	result.fill(Qt::transparent);
 	{
 		Painter p(&result);
@@ -404,15 +412,13 @@ QImage PeerData::generateUserpicImage(
 		ImageRoundRadius radius) const {
 	if (const auto userpic = currentUserpic(view)) {
 		const auto options = (radius == ImageRoundRadius::Ellipse)
-			? (Images::Option::RoundedAll | Images::Option::Circled)
+			? Images::Option::RoundCircle
 			: (radius == ImageRoundRadius::None)
-			? Images::Options()
-			: (Images::Option::RoundedAll | Images::Option::RoundedSmall);
+			? Images::Option()
+			: Images::Option::RoundSmall;
 		return userpic->pixNoCache(
-			size,
-			size,
-			Images::Option::Smooth | options
-		).toImage();
+			{ size, size },
+			{ .options = options }).toImage();
 	}
 	auto result = QImage(
 		QSize(size, size),
@@ -1193,11 +1199,11 @@ FullMsgId ResolveTopPinnedId(
 			.skippedAfter = 0,
 		};
 	if (!slice.messageIds.empty()) {
-		return FullMsgId(peerToChannel(peer->id), slice.messageIds.back());
+		return FullMsgId(peer->id, slice.messageIds.back());
 	} else if (!migrated || slice.count != 0 || old.messageIds.empty()) {
 		return FullMsgId();
 	} else {
-		return FullMsgId(0, old.messageIds.back());
+		return FullMsgId(migrated->id, old.messageIds.back());
 	}
 }
 
@@ -1227,9 +1233,9 @@ FullMsgId ResolveMinPinnedId(
 			.skippedAfter = 0,
 		};
 	if (!old.messageIds.empty()) {
-		return FullMsgId(0, old.messageIds.front());
+		return FullMsgId(migrated->id, old.messageIds.front());
 	} else if (old.count == 0 && !slice.messageIds.empty()) {
-		return FullMsgId(peerToChannel(peer->id), slice.messageIds.front());
+		return FullMsgId(peer->id, slice.messageIds.front());
 	} else {
 		return FullMsgId();
 	}

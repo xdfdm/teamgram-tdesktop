@@ -7,6 +7,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "data/data_cloud_file.h"
 #include "history/history_item.h"
 #include "ui/empty_userpic.h"
 #include "ui/effects/animations.h"
@@ -60,30 +61,12 @@ struct HistoryMessageViews : public RuntimeComponent<HistoryMessageViews, Histor
 };
 
 struct HistoryMessageSigned : public RuntimeComponent<HistoryMessageSigned, HistoryItem> {
-	void refresh(const QString &date);
-	int maxWidth() const;
-
 	QString author;
-	Ui::Text::String signature;
-	bool isElided = false;
 	bool isAnonymousRank = false;
 };
 
 struct HistoryMessageEdited : public RuntimeComponent<HistoryMessageEdited, HistoryItem> {
-	void refresh(const QString &date, bool displayed);
-	int maxWidth() const;
-
 	TimeId date = 0;
-	Ui::Text::String text;
-};
-
-struct HistoryMessageSponsored : public RuntimeComponent<
-		HistoryMessageSponsored,
-		HistoryItem> {
-	HistoryMessageSponsored();
-	int maxWidth() const;
-
-	Ui::Text::String text;
 };
 
 struct HiddenSenderInfo {
@@ -93,8 +76,16 @@ struct HiddenSenderInfo {
 	QString firstName;
 	QString lastName;
 	PeerId colorPeerId = 0;
-	Ui::EmptyUserpic userpic;
 	Ui::Text::String nameText;
+	Ui::EmptyUserpic emptyUserpic;
+	mutable Data::CloudImage customUserpic;
+
+	[[nodiscard]] bool paintCustomUserpic(
+		Painter &p,
+		int x,
+		int y,
+		int outerWidth,
+		int size) const;
 
 	inline bool operator==(const HiddenSenderInfo &other) const {
 		return name == other.name;
@@ -118,6 +109,18 @@ struct HistoryMessageForwarded : public RuntimeComponent<HistoryMessageForwarded
 	PeerData *savedFromPeer = nullptr;
 	MsgId savedFromMsgId = 0;
 	bool imported = false;
+};
+
+struct HistoryMessageSponsored : public RuntimeComponent<HistoryMessageSponsored, HistoryItem> {
+	enum class Type : uchar {
+		User,
+		Group,
+		Broadcast,
+		Post,
+		Bot,
+	};
+	std::unique_ptr<HiddenSenderInfo> sender;
+	Type type = Type::User;
 };
 
 struct HistoryMessageReply : public RuntimeComponent<HistoryMessageReply, HistoryItem> {
@@ -151,8 +154,13 @@ struct HistoryMessageReply : public RuntimeComponent<HistoryMessageReply, Histor
 	// Must be called before destructor.
 	void clearData(not_null<HistoryMessage*> holder);
 
-	bool isNameUpdated() const;
-	void updateName() const;
+	[[nodiscard]] PeerData *replyToFrom(
+		not_null<HistoryMessage*> holder) const;
+	[[nodiscard]] QString replyToFromName(
+		not_null<HistoryMessage*> holder) const;
+	[[nodiscard]] QString replyToFromName(not_null<PeerData*> peer) const;
+	[[nodiscard]] bool isNameUpdated(not_null<HistoryMessage*> holder) const;
+	void updateName(not_null<HistoryMessage*> holder) const;
 	void resize(int width) const;
 	void itemRemoved(HistoryMessage *holder, HistoryItem *removed);
 

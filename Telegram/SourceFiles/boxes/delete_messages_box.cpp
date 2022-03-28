@@ -156,6 +156,12 @@ void DeleteMessagesBox::prepare() {
 						: tr::lng_box_leave();
 				}, _revoke->lifetime());
 			}
+		} else if (canDelete
+			&& _wipeHistoryJustClear
+			&& (peer->isMegagroup() || peer->isChat())) {
+			appendDetails({
+				tr::lng_delete_clear_for_me(tr::now)
+			});
 		}
 	} else if (_moderateFrom) {
 		Assert(_moderateInChannel != nullptr);
@@ -176,7 +182,11 @@ void DeleteMessagesBox::prepare() {
 		if (_moderateDeleteAll) {
 			_deleteAll.create(
 				this,
-				tr::lng_delete_all_from(tr::now),
+				tr::lng_delete_all_from_user(
+					tr::now,
+					lt_user,
+					Ui::Text::Bold(_moderateFrom->name),
+					Ui::Text::WithEntities),
 				false,
 				st::defaultBoxCheckbox);
 		}

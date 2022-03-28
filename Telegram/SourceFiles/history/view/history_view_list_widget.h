@@ -7,9 +7,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #pragma once
 
+#include "base/timer.h"
 #include "ui/rp_widget.h"
 #include "ui/effects/animations.h"
-#include "ui/chat/select_scroll_manager.h" // Has base/timer.h.
+#include "ui/dragging_scroll_manager.h"
 #include "ui/widgets/tooltip.h"
 #include "mtproto/sender.h"
 #include "data/data_messages.h"
@@ -22,6 +23,7 @@ class Session;
 namespace Ui {
 class PopupMenu;
 class ChatTheme;
+struct ChatPaintContext;
 } // namespace Ui
 
 namespace Window {
@@ -31,7 +33,13 @@ class SessionController;
 namespace Data {
 struct Group;
 class CloudImageView;
+struct Reaction;
 } // namespace Data
+
+namespace HistoryView::Reactions {
+class Manager;
+struct ButtonParameters;
+} // namespace HistoryView::Reactions
 
 namespace HistoryView {
 
@@ -106,7 +114,8 @@ public:
 		return listCopyRestrictionType(nullptr);
 	}
 	virtual CopyRestrictionType listSelectRestrictionType() = 0;
-
+	virtual auto listAllowedReactionsValue()
+		-> rpl::producer<std::optional<base::flat_set<QString>>> = 0;
 };
 
 struct SelectionData {
@@ -160,8 +169,7 @@ private:
 class ListWidget final
 	: public Ui::RpWidget
 	, public ElementDelegate
-	, public Ui::AbstractTooltipShower
-	, private base::Subscriber {
+	, public Ui::AbstractTooltipShower {
 public:
 	ListWidget(
 		QWidget *parent,
@@ -236,6 +244,11 @@ public:
 	[[nodiscard]] rpl::producer<FullMsgId> showMessageRequested() const;
 	void replyNextMessage(FullMsgId fullId, bool next = true);
 
+	[[nodiscard]] Reactions::ButtonParameters reactionButtonParameters(
+		not_null<const Element*> view,
+		QPoint position,
+		const TextState &reactionState) const;
+
 	// ElementDelegate interface.
 	Context elementContext() override;
 	std::unique_ptr<Element> elementCreate(
@@ -278,6 +291,7 @@ public:
 	not_null<Ui::PathShiftGradient*> elementPathShiftGradient() override;
 	void elementReplyTo(const FullMsgId &to) override;
 	void elementStartInteraction(not_null<const Element*> view) override;
+	void elementShowSpoilerAnimation() override;
 
 	void setEmptyInfoWidget(base::unique_qptr<Ui::RpWidget> &&w);
 
@@ -363,6 +377,8 @@ private:
 	void saveScrollState();
 	void restoreScrollState();
 
+	Ui::ChatPaintContext preparePaintContext(const QRect &clip) const;
+
 	Element *viewForItem(FullMsgId itemId) const;
 	Element *viewForItem(const HistoryItem *item) const;
 	not_null<Element*> enforceViewForItem(not_null<HistoryItem*> item);
@@ -422,6 +438,7 @@ private:
 		const SelectedMap::const_iterator &i);
 	bool hasSelectedText() const;
 	bool hasSelectedItems() const;
+	bool inSelectionMode() const;
 	bool overSelectedItems() const;
 	void clearTextSelection();
 	void clearSelected();
@@ -490,6 +507,8 @@ private:
 	void startItemRevealAnimations();
 	void revealItemsCallback();
 
+	void startMessageSendingAnimation(not_null<HistoryItem*> item);
+
 	void updateHighlightedMessage();
 	void clearHighlightedMessage();
 
@@ -545,10 +564,15 @@ private:
 	base::flat_map<
 		not_null<PeerData*>,
 		std::shared_ptr<Data::CloudImageView>> _userpics, _userpicsCache;
+	base::flat_map<
+		MsgId,
+		std::shared_ptr<Data::CloudImageView>> _sponsoredUserpics;
 
 	const std::unique_ptr<Ui::PathShiftGradient> _pathGradient;
 
 	base::unique_qptr<Ui::RpWidget> _emptyInfo = nullptr;
+
+	std::unique_ptr<HistoryView::Reactions::Manager> _reactionsManager;
 
 	int _minHeight = 0;
 	int _visibleTop = 0;
@@ -598,6 +622,8 @@ private:
 
 	bool _isChatWide = false;
 
+	// _menu must be destroyed before _whoReactedMenuLifetime.
+	rpl::lifetime _whoReactedMenuLifetime;
 	base::unique_qptr<Ui::PopupMenu> _menu;
 
 	QPoint _trippleClickPoint;
@@ -607,7 +633,9 @@ private:
 	FullMsgId _highlightedMessageId;
 	base::Timer _highlightTimer;
 
-	Ui::SelectScrollManager _selectScroll;
+	Ui::Animations::Simple _spoilerOpacity;
+
+	Ui::DraggingScrollManager _selectScroll;
 
 	rpl::event_stream<FullMsgId> _requestedToEditMessage;
 	rpl::event_stream<FullMsgId> _requestedToReplyToMessage;

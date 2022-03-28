@@ -148,7 +148,8 @@ public:
 	}
 	void setGroupCall(
 		const MTPInputGroupCall &call,
-		TimeId scheduleDate = 0);
+		TimeId scheduleDate = 0,
+		bool rtmp = false);
 	void clearGroupCall();
 	void setGroupCallDefaultJoinAs(PeerId peerId);
 	[[nodiscard]] PeerId groupCallDefaultJoinAs() const;
@@ -175,6 +176,9 @@ public:
 		int count,
 		std::vector<UserId> recentRequesters);
 
+	void setAllowedReactions(base::flat_set<QString> list);
+	[[nodiscard]] const base::flat_set<QString> &allowedReactions() const;
+
 	// Still public data members.
 	const MTPlong inputChat;
 
@@ -198,6 +202,8 @@ private:
 	int _version = 0;
 	int _pendingRequestsCount = 0;
 	std::vector<UserId> _recentRequesters;
+
+	base::flat_set<QString> _allowedReactions;
 
 	std::unique_ptr<Data::GroupCall> _call;
 	PeerId _callDefaultJoinAs = 0;

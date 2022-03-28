@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_session.h"
 #include "data/data_changes.h"
 #include "data/data_group_call.h"
+#include "data/data_message_reactions.h"
 #include "history/history.h"
 #include "main/main_session.h"
 #include "apiwrap.h"
@@ -202,7 +203,8 @@ void ChatData::setMigrateToChannel(ChannelData *channel) {
 
 void ChatData::setGroupCall(
 		const MTPInputGroupCall &call,
-		TimeId scheduleDate) {
+		TimeId scheduleDate,
+		bool rtmp) {
 	if (migrateTo()) {
 		return;
 	}
@@ -223,7 +225,8 @@ void ChatData::setGroupCall(
 			this,
 			data.vid().v,
 			data.vaccess_hash().v,
-			scheduleDate);
+			scheduleDate,
+			rtmp);
 		owner().registerGroupCall(_call.get());
 		session().changes().peerUpdated(this, UpdateFlag::GroupCall);
 		addFlags(Flag::CallActive);
@@ -284,6 +287,23 @@ void ChatData::setPendingRequestsCount(
 		_recentRequesters = std::move(recentRequesters);
 		session().changes().peerUpdated(this, UpdateFlag::PendingRequests);
 	}
+}
+
+void ChatData::setAllowedReactions(base::flat_set<QString> list) {
+	if (_allowedReactions != list) {
+		const auto toggled = (_allowedReactions.empty() != list.empty());
+		_allowedReactions = std::move(list);
+		if (toggled) {
+			owner().reactions().updateAllInHistory(
+				this,
+				!_allowedReactions.empty());
+		}
+		session().changes().peerUpdated(this, UpdateFlag::Reactions);
+	}
+}
+
+const base::flat_set<QString> &ChatData::allowedReactions() const {
+	return _allowedReactions;
 }
 
 namespace Data {
@@ -457,6 +477,8 @@ void ApplyChatUpdate(not_null<ChatData*> chat, const MTPDchatFull &update) {
 	}
 	chat->checkFolder(update.vfolder_id().value_or_empty());
 	chat->setThemeEmoji(qs(update.vtheme_emoticon().value_or_empty()));
+	chat->setAllowedReactions(
+		Data::Reactions::ParseAllowed(update.vavailable_reactions()));
 	chat->fullUpdated();
 	chat->setAbout(qs(update.vabout()));
 	chat->setPendingRequestsCount(

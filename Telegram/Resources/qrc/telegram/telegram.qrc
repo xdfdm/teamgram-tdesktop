@@ -67,6 +67,7 @@
     <file alias="recording/info_audio.svg">../../art/recording/recording_info_audio.svg</file>
     <file alias="recording/info_video_landscape.svg">../../art/recording/recording_info_video_landscape.svg</file>
     <file alias="recording/info_video_portrait.svg">../../art/recording/recording_info_video_portrait.svg</file>
+    <file alias="icons/settings/dino.svg">../../icons/settings/dino.svg</file>
   </qresource>
   <qresource prefix="/icons">
     <file alias="calls/hands.lottie">../../icons/calls/hands.lottie</file>
@@ -82,9 +83,6 @@
     <file alias="settings/devices/device_web_edge.lottie">../../icons/settings/devices/device_web_edge.lottie</file>
     <file alias="settings/devices/device_web_firefox.lottie">../../icons/settings/devices/device_web_firefox.lottie</file>
     <file alias="settings/devices/device_web_safari.lottie">../../icons/settings/devices/device_web_safari.lottie</file>
-  </qresource>
-  <qresource prefix="/qt-project.org">
-    <file>../qmime/freedesktop.org.xml</file>
   </qresource>
   <qresource prefix="/misc">
     <file alias="default_shortcuts-custom.json">../../default_shortcuts-custom.json</file>

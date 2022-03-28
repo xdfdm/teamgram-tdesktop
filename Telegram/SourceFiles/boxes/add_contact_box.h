@@ -22,7 +22,6 @@ class Session;
 } // namespace Main
 
 namespace Ui {
-class ConfirmBox;
 class FlatLabel;
 class InputField;
 class PhoneInput;
@@ -46,7 +45,7 @@ enum class PeerFloodType {
 
 [[nodiscard]] style::InputField CreateBioFieldStyle();
 
-[[nodiscard]] QString PeerFloodErrorText(
+[[nodiscard]] TextWithEntities PeerFloodErrorText(
 	not_null<Main::Session*> session,
 	PeerFloodType type);
 void ShowAddParticipantsError(

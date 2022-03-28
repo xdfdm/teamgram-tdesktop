@@ -27,13 +27,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "styles/style_widgets.h"
 #include "styles/style_window.h"
+#include "styles/style_menu_icons.h"
 
 namespace Window {
 namespace {
 
 [[nodiscard]] rpl::producer<Dialogs::UnreadState> MainListUnreadState(
 		not_null<Dialogs::MainList*> list) {
-	return rpl::single(rpl::empty_value()) | rpl::then(
+	return rpl::single(rpl::empty) | rpl::then(
 		list->unreadStateChanges() | rpl::to_empty
 	) | rpl::map([=] {
 		return list->unreadState();
@@ -102,9 +103,7 @@ void FiltersMenu::setup() {
 	}, _outer.lifetime());
 
 	const auto filters = &_session->session().data().chatsFilters();
-	rpl::single(
-		rpl::empty_value()
-	) | rpl::then(
+	rpl::single(rpl::empty) | rpl::then(
 		filters->changed()
 	) | rpl::start_with_next([=] {
 		refresh();
@@ -307,27 +306,36 @@ void FiltersMenu::showMenu(QPoint position, FilterId id) {
 	if (i == end(_filters)) {
 		return;
 	}
-	_popupMenu = base::make_unique_q<Ui::PopupMenu>(i->second.get());
-	const auto addAction = [&](const QString &text, Fn<void()> callback) {
+	_popupMenu = base::make_unique_q<Ui::PopupMenu>(
+		i->second.get(),
+		st::popupMenuWithIcons);
+	const auto addAction = [&](
+			const QString &text,
+			Fn<void()> callback,
+			const style::icon *icon) {
 		return _popupMenu->addAction(
 			text,
-			crl::guard(&_outer, std::move(callback)));
+			crl::guard(&_outer, std::move(callback)),
+			icon);
 	};
 
 	addAction(
 		tr::lng_filters_context_edit(tr::now),
-		[=] { showEditBox(id); });
+		[=] { showEditBox(id); },
+		&st::menuIconEdit);
 
 	auto filteredChats = [=] {
 		return _session->session().data().chatsFilters().chatsList(id);
 	};
 	Window::MenuAddMarkAsReadChatListAction(
+		_session,
 		std::move(filteredChats),
 		addAction);
 
 	addAction(
 		tr::lng_filters_context_remove(tr::now),
-		[=] { showRemoveBox(id); });
+		[=] { showRemoveBox(id); },
+		&st::menuIconDelete);
 	_popupMenu->popup(position);
 }
 
@@ -336,10 +344,11 @@ void FiltersMenu::showEditBox(FilterId id) {
 }
 
 void FiltersMenu::showRemoveBox(FilterId id) {
-	_session->window().show(Box<Ui::ConfirmBox>(
-		tr::lng_filters_remove_sure(tr::now),
-		tr::lng_filters_remove_yes(tr::now),
-		[=](Fn<void()> &&close) { close(); remove(id); }));
+	_session->window().show(Ui::MakeConfirmBox({
+		.text = tr::lng_filters_remove_sure(),
+		.confirmed = [=](Fn<void()> &&close) { close(); remove(id); },
+		.confirmText = tr::lng_filters_remove_yes(),
+	}));
 }
 
 void FiltersMenu::remove(FilterId id) {

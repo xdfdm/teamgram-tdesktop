@@ -162,14 +162,13 @@ Call::Call(
 , _user(user)
 , _api(&_user->session().mtp())
 , _type(type)
+, _discardByTimeoutTimer([=] { hangup(); })
 , _videoIncoming(
 	std::make_unique<Webrtc::VideoTrack>(
 		StartVideoState(video)))
 , _videoOutgoing(
 	std::make_unique<Webrtc::VideoTrack>(
 		StartVideoState(video))) {
-	_discardByTimeoutTimer.setCallback([=] { hangup(); });
-
 	if (_type == Type::Outgoing) {
 		setState(State::Requesting);
 	} else {
@@ -1235,7 +1234,7 @@ void Call::handleRequestError(const QString &error) {
 		? Lang::Hard::CallErrorIncompatible().replace("{user}", _user->name)
 		: QString();
 	if (!inform.isEmpty()) {
-		Ui::show(Box<Ui::InformBox>(inform));
+		Ui::show(Ui::MakeInformBox(inform));
 	}
 	finish(FinishType::Failed);
 }
@@ -1247,7 +1246,7 @@ void Call::handleControllerError(const QString &error) {
 		? tr::lng_call_error_audio_io(tr::now)
 		: QString();
 	if (!inform.isEmpty()) {
-		Ui::show(Box<Ui::InformBox>(inform));
+		Ui::show(Ui::MakeInformBox(inform));
 	}
 	finish(FinishType::Failed);
 }

@@ -9,10 +9,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "base/flags.h"
 #include "base/object_ptr.h"
+#include "base/observer.h"
 #include "base/weak_ptr.h"
 #include "base/timer.h"
 #include "dialogs/dialogs_key.h"
 #include "ui/layers/layer_widget.h"
+#include "ui/layers/show.h"
 #include "window/window_adaptive.h"
 
 class PhotoData;
@@ -36,6 +38,10 @@ namespace Settings {
 enum class Type;
 } // namespace Settings
 
+namespace Calls {
+struct StartGroupCallArgs;
+} // namespace Calls
+
 namespace Passport {
 struct FormRequest;
 class FormController;
@@ -50,12 +56,17 @@ struct ChatThemeKey;
 struct ChatPaintContext;
 struct ChatThemeBackground;
 struct ChatThemeBackgroundData;
+class MessageSendingAnimationController;
 } // namespace Ui
 
 namespace Data {
 struct CloudTheme;
 enum class CloudThemeType;
 } // namespace Data
+
+namespace HistoryView::Reactions {
+class CachedIconFactory;
+} // namespace HistoryView::Reactions
 
 namespace Window {
 
@@ -164,6 +175,7 @@ public:
 	using RepliesByLinkInfo = std::variant<v::null_t, CommentId, ThreadId>;
 	struct PeerByLinkInfo {
 		std::variant<QString, ChannelId> usernameOrId;
+		QString phone;
 		MsgId messageId = ShowAtUnreadMsgId;
 		RepliesByLinkInfo repliesInfo;
 		QString startToken;
@@ -221,12 +233,19 @@ public:
 
 
 private:
+	void resolvePhone(
+		const QString &phone,
+		Fn<void(not_null<PeerData*>)> done);
 	void resolveUsername(
 		const QString &username,
 		Fn<void(not_null<PeerData*>)> done);
 	void resolveChannelById(
 		ChannelId channelId,
 		Fn<void(not_null<ChannelData*>)> done);
+
+	void resolveDone(
+		const MTPcontacts_ResolvedPeer &result,
+		Fn<void(not_null<PeerData*>)> done);
 
 	void showPeerByLinkResolved(
 		not_null<PeerData*> peer,
@@ -252,6 +271,8 @@ public:
 	[[nodiscard]] Controller &window() const {
 		return *_window;
 	}
+	[[nodiscard]] PeerData *singlePeer() const;
+	[[nodiscard]] bool isPrimary() const;
 	[[nodiscard]] not_null<::MainWindow*> widget() const;
 	[[nodiscard]] not_null<MainWidget*> content() const;
 	[[nodiscard]] Adaptive &adaptive() const;
@@ -268,11 +289,18 @@ public:
 		return _selectingPeer;
 	}
 
+	void setConnectingBottomSkip(int skip);
+	rpl::producer<int> connectingBottomSkipValue() const;
+
 	QPointer<Ui::BoxContent> show(
 		object_ptr<Ui::BoxContent> content,
 		Ui::LayerOptions options = Ui::LayerOption::KeepOther,
 		anim::type animated = anim::type::normal);
 
+	void hideLayer(anim::type animated = anim::type::normal);
+
+	[[nodiscard]] auto sendingAnimation() const
+	-> Ui::MessageSendingAnimationController &;
 	[[nodiscard]] auto tabbedSelector() const
 	-> not_null<ChatHelpers::TabbedSelector*>;
 	void takeTabbedSelectorOwnershipFrom(not_null<QWidget*> parent);
@@ -295,6 +323,12 @@ public:
 	rpl::producer<Dialogs::RowDescriptor> activeChatEntryValue() const;
 	rpl::producer<Dialogs::Key> activeChatValue() const;
 	bool jumpToChatListEntry(Dialogs::RowDescriptor row);
+
+	[[nodiscard]] Dialogs::RowDescriptor resolveChatNext(
+		Dialogs::RowDescriptor from = {}) const;
+	[[nodiscard]] Dialogs::RowDescriptor resolveChatPrevious(
+		Dialogs::RowDescriptor from = {}) const;
+
 	void showEditPeerBox(PeerData *peer);
 
 	void enableGifPauseReason(GifPauseReason reason);
@@ -324,15 +358,9 @@ public:
 
 	void showPeer(not_null<PeerData*> peer, MsgId msgId = ShowAtUnreadMsgId);
 
-	enum class GroupCallJoinConfirm {
-		None,
-		IfNowInAnother,
-		Always,
-	};
 	void startOrJoinGroupCall(
 		not_null<PeerData*> peer,
-		QString joinHash = QString(),
-		GroupCallJoinConfirm confirm = GroupCallJoinConfirm::IfNowInAnother);
+		const Calls::StartGroupCallArgs &args);
 
 	void showSection(
 		std::shared_ptr<SectionMemento> memento,
@@ -448,6 +476,11 @@ public:
 		return _chatStyle.get();
 	}
 
+	[[nodiscard]] auto cachedReactionIconFactory() const
+	-> HistoryView::Reactions::CachedIconFactory & {
+		return *_cachedReactionIconFactory;
+	}
+
 	rpl::lifetime &lifetime() {
 		return _lifetime;
 	}
@@ -492,6 +525,9 @@ private:
 	const not_null<Controller*> _window;
 	const std::unique_ptr<ChatHelpers::EmojiInteractions> _emojiInteractions;
 
+	using SendingAnimation = Ui::MessageSendingAnimationController;
+	const std::unique_ptr<SendingAnimation> _sendingAnimation;
+
 	std::unique_ptr<Passport::FormController> _passportForm;
 	std::unique_ptr<FiltersMenu> _filters;
 
@@ -512,6 +548,8 @@ private:
 
 	rpl::variable<FilterId> _activeChatsFilter;
 
+	rpl::variable<int> _connectingBottomSkip;
+
 	PeerData *_showEditPeer = nullptr;
 	rpl::variable<Data::Folder*> _openedFolder;
 
@@ -525,10 +563,29 @@ private:
 	std::deque<std::shared_ptr<Ui::ChatTheme>> _lastUsedCustomChatThemes;
 	rpl::variable<PeerThemeOverride> _peerThemeOverride;
 
+	using ReactionIconFactory = HistoryView::Reactions::CachedIconFactory;
+	std::unique_ptr<ReactionIconFactory> _cachedReactionIconFactory;
+
 	rpl::lifetime _lifetime;
 
 };
 
 void ActivateWindow(not_null<SessionController*> controller);
+
+class Show : public Ui::Show {
+public:
+	explicit Show(not_null<SessionNavigation*> navigation);
+	explicit Show(not_null<Controller*> window);
+	~Show();
+	void showBox(
+		object_ptr<Ui::BoxContent> content,
+		Ui::LayerOptions options = Ui::LayerOption::KeepOther) const override;
+	void hideLayer() const override;
+	[[nodiscard]] not_null<QWidget*> toastParent() const override;
+	[[nodiscard]] bool valid() const override;
+	operator bool() const override;
+private:
+	const base::weak_ptr<Controller> _window;
+};
 
 } // namespace Window

@@ -45,6 +45,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwindow.h"
 #include "core/application.h"
 #include "lottie/lottie_animation.h"
+#include "boxes/abstract_box.h" // Ui::hideLayer().
 
 #include <QtCore/QBuffer>
 #include <QtCore/QMimeType>
@@ -52,7 +53,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
-const auto kAnimatedStickerDimensions = QSize(
+const auto kLottieStickerDimensions = QSize(
 	kStickerSideSize,
 	kStickerSideSize);
 
@@ -262,6 +263,22 @@ Data::FileOrigin StickerData::setOrigin() const {
 		: Data::FileOrigin();
 }
 
+bool StickerData::isStatic() const {
+	return (type == StickerType::Webp);
+}
+
+bool StickerData::isLottie() const {
+	return (type == StickerType::Tgs);
+}
+
+bool StickerData::isAnimated() const {
+	return !isStatic();
+}
+
+bool StickerData::isWebm() const {
+	return (type == StickerType::Webm);
+}
+
 VoiceData::~VoiceData() {
 	if (!waveform.isEmpty()
 		&& waveform[0] == -1
@@ -305,21 +322,25 @@ void DocumentData::setattributes(
 			dimensions = QSize(data.vw().v, data.vh().v);
 		}, [&](const MTPDdocumentAttributeAnimated &data) {
 			if (type == FileDocument
-				|| type == StickerDocument
-				|| type == VideoDocument) {
+				|| type == VideoDocument
+				|| (sticker() && sticker()->type != StickerType::Webm)) {
 				type = AnimatedDocument;
 				_additional = nullptr;
 			}
 		}, [&](const MTPDdocumentAttributeSticker &data) {
-			if (type == FileDocument) {
+			const auto was = type;
+			if (type == FileDocument || type == VideoDocument) {
 				type = StickerDocument;
 				_additional = std::make_unique<StickerData>();
 			}
-			if (sticker()) {
-				sticker()->alt = qs(data.valt());
-				if (!sticker()->set.id
+			if (const auto info = sticker()) {
+				if (was == VideoDocument) {
+					info->type = StickerType::Webm;
+				}
+				info->alt = qs(data.valt());
+				if (!info->set.id
 					|| data.vstickerset().type() == mtpc_inputStickerSetID) {
-					sticker()->set = data.vstickerset().match([&](
+					info->set = data.vstickerset().match([&](
 							const MTPDinputStickerSetID &data) {
 						return StickerSetIdentifier{
 							.id = data.vid().v,
@@ -339,6 +360,8 @@ void DocumentData::setattributes(
 				type = data.is_round_message()
 					? RoundVideoDocument
 					: VideoDocument;
+			} else if (const auto info = sticker()) {
+				info->type = StickerType::Webm;
 			}
 			_duration = data.vduration().v;
 			setMaybeSupportsStreaming(data.is_supports_streaming());
@@ -380,12 +403,19 @@ void DocumentData::setattributes(
 	}
 	if (type == StickerDocument
 		&& ((size > Storage::kMaxStickerBytesSize)
-			|| (!sticker()->animated
+			|| (!sticker()->isLottie()
 				&& !GoodStickerDimensions(
 					dimensions.width(),
 					dimensions.height())))) {
 		type = FileDocument;
 		_additional = nullptr;
+	} else if (type == FileDocument
+		&& hasMimeType(qstr("video/webm"))
+		&& (size < Storage::kMaxStickerBytesSize)
+		&& GoodStickerDimensions(dimensions.width(), dimensions.height())) {
+		type = StickerDocument;
+		_additional = std::make_unique<StickerData>();
+		sticker()->type = StickerType::Webm;
 	}
 	if (isAudioFile() || isAnimation() || isVoiceMessage()) {
 		setMaybeSupportsStreaming(true);
@@ -397,8 +427,8 @@ void DocumentData::validateLottieSticker() {
 		&& hasMimeType(qstr("application/x-tgsticker"))) {
 		type = StickerDocument;
 		_additional = std::make_unique<StickerData>();
-		sticker()->animated = true;
-		dimensions = kAnimatedStickerDimensions;
+		sticker()->type = StickerType::Tgs;
+		dimensions = kLottieStickerDimensions;
 	}
 }
 
@@ -451,7 +481,7 @@ void DocumentData::updateThumbnails(
 		owner().cache(),
 		Data::kImageCacheTag,
 		[&](Data::FileOrigin origin) { loadThumbnail(origin); },
-		[&](QImage preloaded) {
+		[&](QImage preloaded, QByteArray) {
 			if (const auto media = activeMediaView()) {
 				media->setThumbnail(std::move(preloaded));
 			}
@@ -501,7 +531,7 @@ void DocumentData::loadThumbnail(Data::FileOrigin origin) {
 		}
 		return true;
 	};
-	const auto done = [=](QImage result) {
+	const auto done = [=](QImage result, QByteArray) {
 		if (const auto active = activeMediaView()) {
 			active->setThumbnail(std::move(result));
 		}
@@ -905,9 +935,10 @@ void DocumentData::handleLoaderUpdates() {
 				Ui::hideLayer();
 				save(origin, failedFileName);
 			};
-			Ui::show(Box<Ui::ConfirmBox>(
-				tr::lng_download_finish_failed(tr::now),
-				crl::guard(&session(), retry)));
+			Ui::show(Ui::MakeConfirmBox({
+				tr::lng_download_finish_failed(),
+				crl::guard(&session(), retry)
+			}));
 		} else {
 			// Sometimes we have LOCATION_INVALID error in documents / stickers.
 			// Sometimes FILE_REFERENCE_EXPIRED could not be handled.
@@ -1158,6 +1189,9 @@ bool DocumentData::hasRemoteLocation() const {
 }
 
 bool DocumentData::useStreamingLoader() const {
+	if (const auto info = sticker()) {
+		return info->isWebm();
+	}
 	return isAnimation()
 		|| isVideoFile()
 		|| isAudioFile()
@@ -1221,7 +1255,11 @@ bool DocumentData::hasWebLocation() const {
 }
 
 bool DocumentData::isNull() const {
-	return !hasRemoteLocation() && !hasWebLocation() && _url.isEmpty();
+	return !hasRemoteLocation()
+		&& !hasWebLocation()
+		&& _url.isEmpty()
+		&& !uploading()
+		&& _location.isEmpty();
 }
 
 MTPInputDocument DocumentData::mtpInput() const {
@@ -1333,7 +1371,7 @@ bool DocumentData::isSongWithCover() const {
 }
 
 bool DocumentData::isAudioFile() const {
-	if (isVoiceMessage()) {
+	if (isVoiceMessage() || isVideoFile()) {
 		return false;
 	} else if (isSong()) {
 		return true;
@@ -1365,6 +1403,10 @@ TimeId DocumentData::getDuration() const {
 		return std::max(voice->duration, 0);
 	} else if (isAnimation() || isVideoFile()) {
 		return std::max(_duration, 0);
+	} else if (const auto sticker = this->sticker()) {
+		if (sticker->isWebm()) {
+			return std::max(_duration, 0);
+		}
 	}
 	return -1;
 }
