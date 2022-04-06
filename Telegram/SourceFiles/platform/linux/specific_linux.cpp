@@ -66,7 +66,7 @@ using Platform::internal::WaylandIntegration;
 namespace Platform {
 namespace {
 
-constexpr auto kDesktopFile = ":/misc/telegramdesktop.desktop"_cs;
+constexpr auto kDesktopFile = ":/misc/teamgramdesktop.desktop"_cs;
 constexpr auto kIconName = "telegram"_cs;
 constexpr auto kDarkColorLimit = 192;
 

@@ -809,7 +809,7 @@ void MainWindow::updateUnreadCounter() {
 	}
 
 	const auto counter = Core::App().unreadBadge();
-	setTitle((counter > 0) ? qsl("Telegram (%1)").arg(counter) : qsl("Telegram"));
+	setTitle((counter > 0) ? qsl("Teamgram (%1)").arg(counter) : qsl("Teamgram"));
 
 	unreadCounterChangedHook();
 }

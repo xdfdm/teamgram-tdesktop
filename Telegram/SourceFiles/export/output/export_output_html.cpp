@@ -1042,7 +1042,7 @@ auto HtmlWriter::Wrap::pushMessage(
 		return "You have sent the following documents: "
 			+ SerializeList(list);
 	}, [&](const ActionContactSignUp &data) {
-		return serviceFrom + " joined Telegram";
+		return serviceFrom + " joined Teamgram";
 	}, [&](const ActionGeoProximityReached &data) {
 		const auto fromName = peers.wrapPeerName(data.fromId);
 		const auto toName = peers.wrapPeerName(data.toId);
