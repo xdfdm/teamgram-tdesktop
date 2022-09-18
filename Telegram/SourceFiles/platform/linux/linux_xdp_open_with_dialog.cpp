@@ -10,16 +10,14 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/platform/base_platform_info.h"
 #include "base/platform/linux/base_linux_glibmm_helper.h"
 #include "base/platform/linux/base_linux_xdp_utilities.h"
+#include "base/platform/linux/base_linux_wayland_integration.h"
 #include "core/application.h"
 #include "window/window_controller.h"
 #include "base/random.h"
 
-#include <QtGui/QWindow>
-
 #include <fcntl.h>
 #include <glibmm.h>
 #include <giomm.h>
-#include <private/qguiapplication_p.h>
 
 namespace Platform {
 namespace File {
@@ -80,6 +78,17 @@ bool ShowXDPOpenWithDialog(const QString &filepath) {
 		const auto handleToken = Glib::ustring("tdesktop")
 			+ std::to_string(base::RandomValue<uint>());
 
+		const auto activationToken = []() -> Glib::ustring {
+			using base::Platform::WaylandIntegration;
+			if (const auto integration = WaylandIntegration::Instance()) {
+				if (const auto token = integration->activationToken()
+					; !token.isNull()) {
+					return token.toStdString();
+				}
+			}
+			return {};
+		}();
+
 		auto uniqueName = connection->get_unique_name();
 		uniqueName.erase(0, 1);
 		uniqueName.replace(uniqueName.find('.'), 1, 1, '_');
@@ -90,12 +99,7 @@ bool ShowXDPOpenWithDialog(const QString &filepath) {
 			+ '/'
 			+ handleToken;
 
-		const auto context = Glib::MainContext::create();
-		const auto loop = Glib::MainLoop::create(context);
-		g_main_context_push_thread_default(context->gobj());
-		const auto contextGuard = gsl::finally([&] {
-			g_main_context_pop_thread_default(context->gobj());
-		});
+		const auto loop = Glib::MainLoop::create();
 
 		const auto signalId = connection->signal_subscribe(
 			[&](
@@ -138,6 +142,10 @@ bool ShowXDPOpenWithDialog(const QString &filepath) {
 						Glib::Variant<Glib::ustring>::create(handleToken)
 					},
 					{
+						"activation_token",
+						Glib::Variant<Glib::ustring>::create(activationToken)
+					},
+					{
 						"ask",
 						Glib::Variant<bool>::create(true)
 					},
@@ -148,10 +156,11 @@ bool ShowXDPOpenWithDialog(const QString &filepath) {
 			std::string(base::Platform::XDP::kService));
 
 		if (signalId != 0) {
-			QWindow window;
-			QGuiApplicationPrivate::showModalWindow(&window);
+			QWidget window;
+			window.setAttribute(Qt::WA_DontShowOnScreen);
+			window.setWindowModality(Qt::ApplicationModal);
+			window.show();
 			loop->run();
-			QGuiApplicationPrivate::hideModalWindow(&window);
 		}
 
 		return true;

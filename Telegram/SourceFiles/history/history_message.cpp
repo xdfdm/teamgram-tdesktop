@@ -36,6 +36,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_user.h"
 #include "data/data_web_page.h"
 #include "data/data_sponsored_messages.h"
+#include "data/data_scheduled_messages.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_widgets.h"
 #include "styles/style_chat.h"
@@ -165,7 +166,7 @@ QString GetErrorTextForSending(
 			return tr::lng_slowmode_enabled(
 				tr::now,
 				lt_left,
-				Ui::FormatDurationWords(left));
+				Ui::FormatDurationWordsSlowmode(left));
 		}
 	}
 
@@ -238,6 +239,16 @@ QString GetErrorTextForSending(
 	return GetErrorTextForSending(peer, items, {}, ignoreSlowmodeCountdown);
 }
 
+TextWithEntities DropCustomEmoji(TextWithEntities text) {
+	text.entities.erase(
+		ranges::remove(
+			text.entities,
+			EntityType::CustomEmoji,
+			&EntityInText::type),
+		text.entities.end());
+	return text;
+}
+
 struct HistoryMessage::CreateConfig {
 	PeerId replyToPeer = 0;
 	MsgId replyTo = 0;
@@ -307,7 +318,10 @@ HistoryMessage::HistoryMessage(
 					config.replyToPeer = 0;
 				}
 			}
-			config.replyTo = data.vreply_to_msg_id().v;
+			const auto id = data.vreply_to_msg_id().v;
+			config.replyTo = data.is_reply_to_scheduled()
+				? history->owner().scheduledMessages().localMessageId(id)
+				: id;
 			config.replyToTop = data.vreply_to_top_id().value_or(
 				data.vreply_to_msg_id().v);
 		});
@@ -325,7 +339,7 @@ HistoryMessage::HistoryMessage(
 	if (const auto media = data.vmedia()) {
 		setMedia(*media);
 	}
-	const auto textWithEntities = TextWithEntities{
+	auto textWithEntities = TextWithEntities{
 		qs(data.vmessage()),
 		Api::EntitiesFromMTP(
 			&history->session(),
@@ -397,12 +411,7 @@ HistoryMessage::HistoryMessage(
 	auto config = CreateConfig();
 
 	const auto originalMedia = original->media();
-	const auto dropForwardInfo = (originalMedia
-		&& originalMedia->dropForwardedInfo())
-		|| (original->history()->peer->isSelf()
-			&& !history->peer->isSelf()
-			&& !original->Has<HistoryMessageForwarded>()
-			&& (!originalMedia || !originalMedia->forceForwardedInfo()));
+	const auto dropForwardInfo = original->computeDropForwardedInfo();
 	if (!dropForwardInfo) {
 		config.originalDate = original->dateOriginal();
 		if (const auto info = original->hiddenSenderInfo()) {
@@ -470,7 +479,13 @@ HistoryMessage::HistoryMessage(
 	if (mediaOriginal && !ignoreMedia()) {
 		_media = mediaOriginal->clone(this);
 	}
-	setText(original->originalText());
+
+	const auto dropCustomEmoji = dropForwardInfo
+		&& !history->session().premium()
+		&& !history->peer->isSelf();
+	setText(dropCustomEmoji
+		? DropCustomEmoji(original->originalText())
+		: original->originalText());
 }
 
 HistoryMessage::HistoryMessage(
@@ -530,7 +545,11 @@ HistoryMessage::HistoryMessage(
 		postAuthor,
 		std::move(markup));
 
-	_media = std::make_unique<Data::MediaFile>(this, document);
+	const auto skipPremiumEffect = !history->session().premium();
+	_media = std::make_unique<Data::MediaFile>(
+		this,
+		document,
+		skipPremiumEffect);
 	setText(caption);
 }
 
@@ -1003,8 +1022,6 @@ void HistoryMessage::createComponents(CreateConfig &&config) {
 	} else {
 		_flags &= ~MessageFlag::HasReplyMarkup;
 	}
-	const auto from = displayFrom();
-	_fromNameVersion = from ? from->nameVersion : 1;
 }
 
 bool HistoryMessage::checkRepliesPts(
@@ -1046,6 +1063,11 @@ void HistoryMessage::setupForwardedComponent(const CreateConfig &config) {
 
 void HistoryMessage::refreshMedia(const MTPMessageMedia *media) {
 	const auto was = (_media != nullptr);
+	if (const auto invoice = was ? _media->invoice() : nullptr) {
+		if (invoice->extendedMedia) {
+			return;
+		}
+	}
 	_media = nullptr;
 	if (media) {
 		setMedia(*media);
@@ -1169,7 +1191,8 @@ std::unique_ptr<Data::Media> HistoryMessage::CreateMedia(
 		return document->match([&](const MTPDdocument &document) -> Result {
 			return std::make_unique<Data::MediaFile>(
 				item,
-				item->history()->owner().processDocument(document));
+				item->history()->owner().processDocument(document),
+				media.is_nopremium());
 		}, [](const MTPDdocumentEmpty &) -> Result {
 			return nullptr;
 		});
@@ -1299,6 +1322,15 @@ void HistoryMessage::applyEdition(const MTPDmessageService &message) {
 			history()->owner().groups().unregisterMessage(this);
 		}
 		finishEditionToEmpty();
+	}
+}
+
+void HistoryMessage::applyEdition(const MTPMessageExtendedMedia &media) {
+	if (const auto existing = this->media()) {
+		if (existing->updateExtendedMedia(this, media)) {
+			checkBuyButton();
+			finishEdition(-1);
+		}
 	}
 }
 
@@ -1483,9 +1515,10 @@ void HistoryMessage::setText(const TextWithEntities &textWithEntities) {
 		return;
 	}
 
-	clearIsolatedEmoji();
+	clearSpecialOnlyEmoji();
 	const auto context = Core::MarkedTextContext{
-		.session = &history()->session()
+		.session = &history()->session(),
+		.customEmojiRepaint = [=] { customEmojiRepaint(); },
 	};
 	_text.setMarkedText(
 		st::messageTextStyle,
@@ -1501,7 +1534,7 @@ void HistoryMessage::setText(const TextWithEntities &textWithEntities) {
 			EnsureNonEmpty(),
 			Ui::ItemTextOptions(this));
 	} else if (!_media) {
-		checkIsolatedEmoji();
+		checkSpecialOnlyEmoji();
 	}
 
 	_textWidth = -1;
@@ -1514,7 +1547,7 @@ void HistoryMessage::reapplyText() {
 }
 
 void HistoryMessage::setEmptyText() {
-	clearIsolatedEmoji();
+	clearSpecialOnlyEmoji();
 	_text.setMarkedText(
 		st::messageTextStyle,
 		{ QString(), EntitiesInText() },
@@ -1524,17 +1557,17 @@ void HistoryMessage::setEmptyText() {
 	_textHeight = 0;
 }
 
-void HistoryMessage::clearIsolatedEmoji() {
-	if (!(_flags & MessageFlag::IsolatedEmoji)) {
+void HistoryMessage::clearSpecialOnlyEmoji() {
+	if (!(_flags & MessageFlag::SpecialOnlyEmoji)) {
 		return;
 	}
 	history()->session().emojiStickersPack().remove(this);
-	_flags &= ~MessageFlag::IsolatedEmoji;
+	_flags &= ~MessageFlag::SpecialOnlyEmoji;
 }
 
-void HistoryMessage::checkIsolatedEmoji() {
+void HistoryMessage::checkSpecialOnlyEmoji() {
 	if (history()->session().emojiStickersPack().add(this)) {
-		_flags |= MessageFlag::IsolatedEmoji;
+		_flags |= MessageFlag::SpecialOnlyEmoji;
 	}
 }
 
@@ -1585,6 +1618,10 @@ void HistoryMessage::setReplyMarkup(HistoryMessageMarkupData &&markup) {
 
 Ui::Text::IsolatedEmoji HistoryMessage::isolatedEmoji() const {
 	return _text.toIsolatedEmoji();
+}
+
+Ui::Text::OnlyCustomEmoji HistoryMessage::onlyCustomEmoji() const {
+	return _text.toOnlyCustomEmoji();
 }
 
 TextWithEntities HistoryMessage::originalText() const {
@@ -1718,8 +1755,14 @@ void HistoryMessage::refreshRepliesText(
 		views->repliesSmall.text = (views->replies.count > 0)
 			? Lang::FormatCountToShort(views->replies.count).string
 			: QString();
-		views->repliesSmall.textWidth = st::semiboldFont->width(
-			views->repliesSmall.text);
+		const auto hadText = (views->repliesSmall.textWidth > 0);
+		views->repliesSmall.textWidth = (views->replies.count > 0)
+			? st::semiboldFont->width(views->repliesSmall.text)
+			: 0;
+		const auto hasText = (views->repliesSmall.textWidth > 0);
+		if (hasText != hadText) {
+			forceResize = true;
+		}
 	}
 	if (forceResize) {
 		history()->owner().requestItemResize(this);
@@ -1787,6 +1830,7 @@ void HistoryMessage::setSponsoredFrom(const Data::SponsoredFrom &from) {
 	sponsored->sender = std::make_unique<HiddenSenderInfo>(
 		from.title,
 		false);
+	sponsored->recommended = from.isRecommended;
 	if (from.userpic.location.valid()) {
 		sponsored->sender->customUserpic.set(
 			&history()->session(),
@@ -1888,7 +1932,7 @@ QString HistoryMessage::notificationHeader() const {
 	if (out() && isFromScheduled() && !_history->peer->isSelf()) {
 		return tr::lng_from_you(tr::now);
 	} else if (!_history->peer->isUser() && !isPost()) {
-		return from()->name;
+		return from()->name();
 	}
 	return QString();
 }

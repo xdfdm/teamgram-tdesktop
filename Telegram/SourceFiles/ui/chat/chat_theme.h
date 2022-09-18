@@ -86,6 +86,9 @@ struct CacheBackgroundResult {
 	bool waitingForNegativePattern = false;
 };
 
+[[nodiscard]] CacheBackgroundResult CacheBackground(
+	const CacheBackgroundRequest &request);
+
 struct CachedBackground {
 	CachedBackground() = default;
 	CachedBackground(CacheBackgroundResult &&result);
@@ -168,11 +171,16 @@ public:
 	[[nodiscard]] ChatPaintContext preparePaintContext(
 		not_null<const ChatStyle*> st,
 		QRect viewport,
-		QRect clip);
+		QRect clip,
+		bool paused);
 	[[nodiscard]] const BackgroundState &backgroundState(QSize area);
 	void clearBackgroundState();
 	[[nodiscard]] rpl::producer<> repaintBackgroundRequests() const;
 	void rotateComplexGradientBackground();
+
+	[[nodiscard]] CacheBackgroundRequest cacheBackgroundRequest(
+		QSize area,
+		int addRotation = 0) const;
 
 private:
 	void cacheBackground();
@@ -181,9 +189,6 @@ private:
 		const CacheBackgroundRequest &request,
 		Fn<void(CacheBackgroundResult&&)> done = nullptr);
 	void setCachedBackground(CacheBackgroundResult &&cached);
-	[[nodiscard]] CacheBackgroundRequest cacheBackgroundRequest(
-		QSize area,
-		int addRotation = 0) const;
 	[[nodiscard]] bool readyForBackgroundRotation() const;
 	void generateNextBackgroundRotation();
 

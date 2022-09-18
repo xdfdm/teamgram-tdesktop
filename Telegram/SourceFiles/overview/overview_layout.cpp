@@ -266,7 +266,11 @@ void RadialProgressItem::checkRadialFinished() const {
 
 RadialProgressItem::~RadialProgressItem() = default;
 
-void StatusText::update(int newSize, int fullSize, int duration, crl::time realDuration) {
+void StatusText::update(
+		int64 newSize,
+		int64 fullSize,
+		TimeId duration,
+		TimeId realDuration) {
 	setSize(newSize);
 	if (_size == Ui::FileStatusSizeReady) {
 		_text = (duration >= 0) ? Ui::FormatDurationAndSizeText(duration, fullSize) : (duration < -1 ? Ui::FormatGifAndSizeText(fullSize) : Ui::FormatSizeText(fullSize));
@@ -281,7 +285,7 @@ void StatusText::update(int newSize, int fullSize, int duration, crl::time realD
 	}
 }
 
-void StatusText::setSize(int newSize) {
+void StatusText::setSize(int64 newSize) {
 	_size = newSize;
 }
 
@@ -586,7 +590,7 @@ TextState Video::getState(
 }
 
 void Video::updateStatusText() {
-	int statusSize = 0;
+	auto statusSize = int64();
 	if (_data->status == FileDownloadFailed || _data->status == FileUploadFailed) {
 		statusSize = Ui::FileStatusSizeFailed;
 	} else if (_data->uploading()) {
@@ -597,8 +601,9 @@ void Video::updateStatusText() {
 		statusSize = Ui::FileStatusSizeReady;
 	}
 	if (statusSize != _status.size()) {
-		int status = statusSize, size = _data->size;
-		if (statusSize >= 0 && statusSize < 0x7F000000) {
+		auto status = statusSize;
+		auto size = _data->size;
+		if (statusSize >= 0 && statusSize < 0xFF000000LL) {
 			size = status;
 			status = Ui::FileStatusSizeReady;
 		}
@@ -658,8 +663,8 @@ void Voice::paint(Painter &p, const QRect &clip, TextSelection selection, const 
 		}
 	}
 	const auto showPause = updateStatusText();
-	const auto nameVersion = parent()->fromOriginal()->nameVersion;
-	if (nameVersion > _nameVersion) {
+	const auto nameVersion = parent()->fromOriginal()->nameVersion();
+	if (_nameVersion < nameVersion) {
 		updateName();
 	}
 	const auto radial = isRadialAnimation();
@@ -874,18 +879,31 @@ const style::RoundCheckbox &Voice::checkboxStyle() const {
 }
 
 void Voice::updateName() {
-	auto version = 0;
 	if (const auto forwarded = parent()->Get<HistoryMessageForwarded>()) {
 		if (parent()->fromOriginal()->isChannel()) {
-			_name.setText(st::semiboldTextStyle, tr::lng_forwarded_channel(tr::now, lt_channel, parent()->fromOriginal()->name), Ui::NameTextOptions());
+			_name.setText(
+				st::semiboldTextStyle,
+				tr::lng_forwarded_channel(
+					tr::now,
+					lt_channel,
+					parent()->fromOriginal()->name()),
+				Ui::NameTextOptions());
 		} else {
-			_name.setText(st::semiboldTextStyle, tr::lng_forwarded(tr::now, lt_user, parent()->fromOriginal()->name), Ui::NameTextOptions());
+			_name.setText(
+				st::semiboldTextStyle,
+				tr::lng_forwarded(
+					tr::now,
+					lt_user,
+					parent()->fromOriginal()->name()),
+				Ui::NameTextOptions());
 		}
 	} else {
-		_name.setText(st::semiboldTextStyle, parent()->from()->name, Ui::NameTextOptions());
+		_name.setText(
+			st::semiboldTextStyle,
+			parent()->from()->name(),
+			Ui::NameTextOptions());
 	}
-	version = parent()->fromOriginal()->nameVersion;
-	_nameVersion = version;
+	_nameVersion = parent()->fromOriginal()->nameVersion();
 }
 
 int Voice::duration() const {
@@ -893,8 +911,9 @@ int Voice::duration() const {
 }
 
 bool Voice::updateStatusText() {
-	bool showPause = false;
-	int32 statusSize = 0, realDuration = 0;
+	auto showPause = false;
+	auto statusSize = int64();
+	auto realDuration = TimeId();
 	if (_data->status == FileDownloadFailed || _data->status == FileUploadFailed) {
 		statusSize = Ui::FileStatusSizeFailed;
 	} else if (dataLoaded()) {
@@ -1419,8 +1438,9 @@ bool Document::withThumb() const {
 }
 
 bool Document::updateStatusText() {
-	bool showPause = false;
-	int32 statusSize = 0, realDuration = 0;
+	auto showPause = false;
+	auto statusSize = int64();
+	auto realDuration = TimeId();
 	if (_data->status == FileDownloadFailed
 		|| _data->status == FileUploadFailed) {
 		statusSize = Ui::FileStatusSizeFailed;
@@ -1509,7 +1529,7 @@ Link::Link(
 	const auto createHandler = [](const QString &url) {
 		return UrlClickHandler::IsSuspicious(url)
 			? std::make_shared<HiddenUrlClickHandler>(url)
-			: std::make_shared<UrlClickHandler>(url);
+			: std::make_shared<UrlClickHandler>(url, false);
 	};
 	_page = media ? media->webpage() : nullptr;
 	if (_page) {
@@ -1967,7 +1987,7 @@ void Gif::validateThumbnail(
 		{
 			.options = (good ? Images::Option() : Images::Option::Blur),
 			.outer = size,
-		});
+		}).toImage();
 }
 
 void Gif::prepareThumbnail(QSize size, QSize frame) {
@@ -2024,13 +2044,13 @@ void Gif::paint(
 			_thumb = pixmap;
 			_thumbGood = true;
 		}
-		p.drawPixmap(r.topLeft(), pixmap);
+		p.drawImage(r.topLeft(), pixmap);
 	} else {
 		prepareThumbnail(r.size(), frame);
 		if (_thumb.isNull()) {
 			p.fillRect(r, st::overviewPhotoBg);
 		} else {
-			p.drawPixmap(r.topLeft(), _thumb);
+			p.drawImage(r.topLeft(), _thumb);
 		}
 	}
 
@@ -2138,7 +2158,7 @@ TextState Gif::getState(
 }
 
 void Gif::updateStatusText() {
-	int statusSize = 0;
+	auto statusSize = int64();
 	if (_data->status == FileDownloadFailed || _data->status == FileUploadFailed) {
 		statusSize = Ui::FileStatusSizeFailed;
 	} else if (_data->uploading()) {
@@ -2149,8 +2169,9 @@ void Gif::updateStatusText() {
 		statusSize = Ui::FileStatusSizeReady;
 	}
 	if (statusSize != _status.size()) {
-		int status = statusSize, size = _data->size;
-		if (statusSize >= 0 && statusSize < 0x7F000000) {
+		auto status = statusSize;
+		auto size = _data->size;
+		if (statusSize >= 0 && statusSize < 0xFF000000LL) {
 			size = status;
 			status = Ui::FileStatusSizeReady;
 		}

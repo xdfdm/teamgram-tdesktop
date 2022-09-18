@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_origin.h"
 #include "data/data_user.h"
 #include "data/data_session.h"
+#include "data/data_message_reaction_id.h"
 #include "lang/lang_keys.h"
 #include "ui/text/format_values.h"
 #include "ui/text/text_utilities.h"
@@ -28,6 +29,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h"
 #include "core/click_handler_types.h"
 #include "main/main_session.h"
+#include "window/notifications_manager.h"
 #include "window/window_session_controller.h"
 #include "facades.h"
 
@@ -302,15 +304,23 @@ TextWithEntities GeneratePermissionsChangeText(
 	return result;
 }
 
+QString PublicJoinLink() {
+	return u"(public_join_link)"_q;
+}
+
 QString ExtractInviteLink(const MTPExportedChatInvite &data) {
 	return data.match([&](const MTPDchatInviteExported &data) {
 		return qs(data.vlink());
+	}, [&](const MTPDchatInvitePublicJoinRequests &data) {
+		return PublicJoinLink();
 	});
 }
 
 QString ExtractInviteLinkLabel(const MTPExportedChatInvite &data) {
 	return data.match([&](const MTPDchatInviteExported &data) {
 		return qs(data.vtitle().value_or_empty());
+	}, [&](const MTPDchatInvitePublicJoinRequests &data) {
+		return PublicJoinLink();
 	});
 }
 
@@ -361,21 +371,29 @@ TextWithEntities GenerateInviteLinkChangeText(
 	const auto label = [](const MTPExportedChatInvite &link) {
 		return link.match([](const MTPDchatInviteExported &data) {
 			return qs(data.vtitle().value_or_empty());
+		}, [&](const MTPDchatInvitePublicJoinRequests &data) {
+			return PublicJoinLink();
 		});
 	};
 	const auto expireDate = [](const MTPExportedChatInvite &link) {
 		return link.match([](const MTPDchatInviteExported &data) {
 			return data.vexpire_date().value_or_empty();
+		}, [&](const MTPDchatInvitePublicJoinRequests &data) {
+			return TimeId();
 		});
 	};
 	const auto usageLimit = [](const MTPExportedChatInvite &link) {
 		return link.match([](const MTPDchatInviteExported &data) {
 			return data.vusage_limit().value_or_empty();
+		}, [&](const MTPDchatInvitePublicJoinRequests &data) {
+			return 0;
 		});
 	};
 	const auto requestApproval = [](const MTPExportedChatInvite &link) {
 		return link.match([](const MTPDchatInviteExported &data) {
 			return data.is_request_needed();
+		}, [&](const MTPDchatInvitePublicJoinRequests &data) {
+			return true;
 		});
 	};
 	const auto wrapDate = [](TimeId date) {
@@ -440,16 +458,19 @@ auto GenerateParticipantString(
 		PeerId participantId) {
 	// User name in "User name (@username)" format with entities.
 	const auto peer = session->data().peer(participantId);
-	auto name = TextWithEntities { peer->name };
+	auto name = TextWithEntities { peer->name()};
 	if (const auto user = peer->asUser()) {
-		auto entityData = QString::number(user->id.value)
-			+ '.'
-			+ QString::number(user->accessHash());
+		const auto data = TextUtilities::MentionNameDataFromFields({
+			.selfId = session->userId().bare,
+			.userId = peerToUser(user->id).bare,
+			.accessHash = user->accessHash(),
+		});
 		name.entities.push_back({
 			EntityType::MentionName,
 			0,
 			int(name.text.size()),
-			entityData });
+			data,
+		});
 	}
 	const auto username = peer->userName();
 	if (username.isEmpty()) {
@@ -690,7 +711,7 @@ void GenerateItems(
 		return callback(OwnedItem(delegate, item), sentDate);
 	};
 
-	const auto fromName = from->name;
+	const auto fromName = from->name();
 	const auto fromLink = from->createOpenLink();
 	const auto fromLinkText = Ui::Text::Link(fromName, QString());
 
@@ -1027,7 +1048,8 @@ void GenerateItems(
 					controller->show(
 						Box<StickerSetBox>(
 							controller,
-							Data::FromInputSet(set)),
+							Data::FromInputSet(set),
+							Data::StickersType::Stickers),
 						Ui::LayerOption::CloseOther);
 				}
 			});
@@ -1103,7 +1125,7 @@ void GenerateItems(
 					lt_from,
 					fromLinkText,
 					lt_chat,
-					Ui::Text::Link(now->name, QString()),
+					Ui::Text::Link(now->name(), QString()),
 					Ui::Text::WithEntities);
 			const auto chatLink = std::make_shared<LambdaClickHandler>([=] {
 				Ui::showPeerHistory(now, ShowAtUnreadMsgId);
@@ -1220,7 +1242,7 @@ void GenerateItems(
 			data.vparticipant());
 		const auto participantPeerLink = participantPeer->createOpenLink();
 		const auto participantPeerLinkText = Ui::Text::Link(
-			participantPeer->name,
+			participantPeer->name(),
 			QString());
 		const auto text = (broadcast
 			? tr::lng_admin_log_muted_participant_channel
@@ -1239,7 +1261,7 @@ void GenerateItems(
 			data.vparticipant());
 		const auto participantPeerLink = participantPeer->createOpenLink();
 		const auto participantPeerLinkText = Ui::Text::Link(
-			participantPeer->name,
+			participantPeer->name(),
 			QString());
 		const auto text = (broadcast
 			? tr::lng_admin_log_unmuted_participant_channel
@@ -1343,7 +1365,7 @@ void GenerateItems(
 			data.vparticipant());
 		const auto participantPeerLink = participantPeer->createOpenLink();
 		const auto participantPeerLinkText = Ui::Text::Link(
-			participantPeer->name,
+			participantPeer->name(),
 			QString());
 		const auto volume = data.vparticipant().match([&](
 				const MTPDgroupCallParticipant &data) {
@@ -1416,7 +1438,7 @@ void GenerateItems(
 				lt_link,
 				linkText,
 				lt_user,
-				Ui::Text::Link(user->name, QString()),
+				Ui::Text::Link(user->name(), QString()),
 				Ui::Text::WithEntities),
 			data.vinvite(),
 			user->createOpenLink());
@@ -1454,23 +1476,40 @@ void GenerateItems(
 
 	const auto createChangeAvailableReactions = [&](
 			const LogEventActionChangeAvailableReactions &data) {
-		auto list = QStringList();
-		for (const auto &emoji : data.vnew_value().v) {
-			list.append(qs(emoji));
-		}
-		const auto text = list.isEmpty()
-			? tr::lng_admin_log_reactions_disabled(
+		const auto text = data.vnew_value().match([&](
+				const MTPDchatReactionsNone&) {
+			return tr::lng_admin_log_reactions_disabled(
 				tr::now,
 				lt_from,
 				fromLinkText,
-				Ui::Text::WithEntities)
-			: tr::lng_admin_log_reactions_updated(
+				Ui::Text::WithEntities);
+		}, [&](const MTPDchatReactionsSome &data) {
+			using namespace Window::Notifications;
+			auto list = TextWithEntities();
+			for (const auto &one : data.vreactions().v) {
+				if (!list.empty()) {
+					list.append(", ");
+				}
+				list.append(Manager::ComposeReactionEmoji(
+					session,
+					Data::ReactionFromMTP(one)));
+			}
+			return tr::lng_admin_log_reactions_updated(
 				tr::now,
 				lt_from,
 				fromLinkText,
 				lt_emoji,
-				{ .text = list.join(", ") },
+				list,
 				Ui::Text::WithEntities);
+		}, [&](const MTPDchatReactionsAll &data) {
+			return (data.is_allow_custom()
+				? tr::lng_admin_log_reactions_allowed_all
+				: tr::lng_admin_log_reactions_allowed_official)(
+					tr::now,
+					lt_from,
+					fromLinkText,
+					Ui::Text::WithEntities);
+		});
 		addSimpleServiceMessage(text);
 	};
 

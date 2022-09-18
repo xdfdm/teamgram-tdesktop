@@ -16,6 +16,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 class PeerData;
 
+namespace Data {
+struct ReactionId;
+} // namespace Data
+
 namespace Main {
 class Session;
 } // namespace Main
@@ -72,6 +76,7 @@ class SectionMemento;
 struct SectionSlideParams {
 	QPixmap oldContentCache;
 	int topSkip = 0;
+	QPixmap topMask;
 	bool withTopBarShadow = false;
 	bool withTabs = false;
 	bool withFade = false;
@@ -204,5 +209,14 @@ private:
 	not_null<SessionController*> controller,
 	not_null<PeerData*> peer)
 -> rpl::producer<std::shared_ptr<Ui::ChatTheme>>;
+
+[[nodiscard]] bool ShowSendPremiumError(
+	not_null<SessionController*> controller,
+	not_null<DocumentData*> document);
+
+[[nodiscard]] bool ShowReactPremiumError(
+	not_null<SessionController*> controller,
+	not_null<HistoryItem*> item,
+	const Data::ReactionId &id);
 
 } // namespace Window

@@ -14,10 +14,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_account.h"
 #include "main/main_domain.h"
 #include "main/main_session_settings.h"
+#include "main/main_app_config.h"
 #include "main/session/send_as_peers.h"
 #include "mtproto/mtproto_config.h"
 #include "chat_helpers/stickers_emoji_pack.h"
 #include "chat_helpers/stickers_dice_pack.h"
+#include "chat_helpers/stickers_gift_box_pack.h"
 #include "inline_bots/bot_attach_web_view.h"
 #include "storage/file_download.h"
 #include "storage/download_manager_mtproto.h"
@@ -90,6 +92,7 @@ Session::Session(
 , _user(_data->processUser(user))
 , _emojiStickersPack(std::make_unique<Stickers::EmojiPack>(this))
 , _diceStickersPacks(std::make_unique<Stickers::DicePacks>(this))
+, _giftBoxStickersPacks(std::make_unique<Stickers::GiftBoxPack>(this))
 , _sendAsPeers(std::make_unique<SendAsPeers>(this))
 , _attachWebView(std::make_unique<InlineBots::AttachWebView>(this))
 , _supportHelper(Support::Helper::Create(this))
@@ -132,6 +135,15 @@ Session::Session(
 			}
 		}, _lifetime);
 
+#ifndef OS_MAC_STORE
+		_account->appConfig().value(
+		) | rpl::start_with_next([=] {
+			_premiumPossible = !_account->appConfig().get<bool>(
+				"premium_purchase_blocked",
+				true);
+		}, _lifetime);
+#endif // OS_MAC_STORE
+
 		if (_settings->hadLegacyCallsPeerToPeerNobody()) {
 			api().userPrivacy().save(
 				Api::UserPrivacy::Key::CallsPeer2Peer,
@@ -145,12 +157,16 @@ Session::Session(
 		// So they can't be called during Main::Session construction.
 		local().readInstalledStickers();
 		local().readInstalledMasks();
+		local().readInstalledCustomEmoji();
 		local().readFeaturedStickers();
+		local().readFeaturedCustomEmoji();
 		local().readRecentStickers();
 		local().readRecentMasks();
 		local().readFavedStickers();
 		local().readSavedGifs();
-		data().stickers().notifyUpdated();
+		data().stickers().notifyUpdated(Data::StickersType::Stickers);
+		data().stickers().notifyUpdated(Data::StickersType::Masks);
+		data().stickers().notifyUpdated(Data::StickersType::Emoji);
 		data().stickers().notifySavedGifsUpdated();
 	});
 
@@ -218,10 +234,41 @@ rpl::producer<> Session::downloaderTaskFinished() const {
 	return downloader().taskFinished();
 }
 
+bool Session::premium() const {
+	return _user->isPremium();
+}
+
+bool Session::premiumPossible() const {
+	return premium() || _premiumPossible.current();
+}
+
+bool Session::premiumBadgesShown() const {
+	return supportMode() || premiumPossible();
+}
+
+rpl::producer<bool> Session::premiumPossibleValue() const {
+	using namespace rpl::mappers;
+
+	auto premium = _user->flagsValue(
+	) | rpl::filter([=](UserData::Flags::Change change) {
+		return (change.diff & UserDataFlag::Premium);
+	}) | rpl::map([=] {
+		return _user->isPremium();
+	});
+	return rpl::combine(
+		std::move(premium),
+		_premiumPossible.value(),
+		_1 || _2);
+}
+
+bool Session::isTestMode() const {
+	return mtp().isTestMode();
+}
+
 uint64 Session::uniqueId() const {
 	// See also Account::willHaveSessionUniqueId.
 	return userId().bare
-		| (mtp().isTestMode() ? 0x0100'0000'0000'0000ULL : 0ULL);
+		| (isTestMode() ? 0x0100'0000'0000'0000ULL : 0ULL);
 }
 
 UserId Session::userId() const {
@@ -284,7 +331,9 @@ void Session::unlockTerms() {
 
 void Session::termsDeleteNow() {
 	api().request(MTPaccount_DeleteAccount(
-		MTP_string("Decline ToS update")
+		MTP_flags(0),
+		MTP_string("Decline ToS update"),
+		MTPInputCheckPasswordSRP()
 	)).send();
 }
 

@@ -684,8 +684,11 @@ CopyRestrictionType PinnedWidget::listSelectRestrictionType() {
 }
 
 auto PinnedWidget::listAllowedReactionsValue()
--> rpl::producer<std::optional<base::flat_set<QString>>> {
+-> rpl::producer<Data::AllowedReactions> {
 	return Data::PeerAllowedReactionsValue(_history->peer);
+}
+
+void PinnedWidget::listShowPremiumToast(not_null<DocumentData*> document) {
 }
 
 void PinnedWidget::confirmDeleteSelected() {

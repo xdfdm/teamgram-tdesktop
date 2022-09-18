@@ -587,9 +587,9 @@ bool InnerWidget::elementUnderCursor(
 	return (Element::Hovered() == view);
 }
 
-crl::time InnerWidget::elementHighlightTime(
-		not_null<const HistoryItem*> item) {
-	return crl::time(0);
+float64 InnerWidget::elementHighlightOpacity(
+		not_null<const HistoryItem*> item) const {
+	return 0.;
 }
 
 bool InnerWidget::elementInSelectionMode() {
@@ -639,7 +639,7 @@ void InnerWidget::elementShowTooltip(
 	Fn<void()> hiddenCallback) {
 }
 
-bool InnerWidget::elementIsGifPaused() {
+bool InnerWidget::elementAnimationsPaused() {
 	return _controller->isGifPausedAtLeastFor(Window::GifPauseReason::Any);
 }
 
@@ -671,6 +671,14 @@ void InnerWidget::elementReplyTo(const FullMsgId &to) {
 }
 
 void InnerWidget::elementStartInteraction(not_null<const Element*> view) {
+}
+
+void InnerWidget::elementStartPremium(
+	not_null<const Element*> view,
+	Element *replacing) {
+}
+
+void InnerWidget::elementCancelPremium(not_null<const Element*> view) {
 }
 
 void InnerWidget::elementShowSpoilerAnimation() {
@@ -810,10 +818,7 @@ void InnerWidget::addEvents(Direction direction, const QVector<MTPChannelAdminLo
 		: newItemsForDownDirection;
 	addToItems.reserve(oldItemsCount + events.size() * 2);
 	for (const auto &event : events) {
-		const auto &data = event.match([](const MTPDchannelAdminLogEvent &d)
-				-> const MTPDchannelAdminLogEvent & {
-			return d;
-		});
+		const auto &data = event.data();
 		const auto id = data.vid().v;
 		if (_eventIds.find(id) != _eventIds.end()) {
 			return;
@@ -1424,7 +1429,7 @@ void InnerWidget::suggestRestrictParticipant(
 				: tr::lng_profile_sure_kick)(
 					tr::now,
 					lt_user,
-					participant->name);
+					participant->name());
 			auto weakBox = std::make_shared<QPointer<Ui::BoxContent>>();
 			const auto sure = crl::guard(this, [=] {
 				restrictParticipant(
@@ -1462,7 +1467,7 @@ void InnerWidget::suggestRestrictParticipant(
 				editRestrictions(false, ChatRestrictionsInfo());
 			}).send();
 		}
-	});
+	}, &st::menuIconRestrict);
 }
 
 void InnerWidget::restrictParticipant(

@@ -15,9 +15,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item_components.h"
 #include "history/history_message.h"
 #include "history/history.h"
+#include "history/view/reactions/history_view_reactions_animation.h"
 #include "history/view/history_view_message.h"
 #include "history/view/history_view_cursor_state.h"
-#include "history/view/history_view_react_animation.h"
 #include "core/click_handler_types.h"
 #include "main/main_session.h"
 #include "lottie/lottie_icon.h"
@@ -28,6 +28,16 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "styles/style_dialogs.h"
 
 namespace HistoryView {
+
+struct BottomInfo::Reaction {
+	mutable std::unique_ptr<Reactions::Animation> animation;
+	mutable QImage image;
+	ReactionId id;
+	QString countText;
+	int count = 0;
+	int countTextWidth = 0;
+	bool chosen = false;
+};
 
 BottomInfo::BottomInfo(
 	not_null<::Data::Reactions*> reactionsOwner,
@@ -150,7 +160,7 @@ ClickHandlerPtr BottomInfo::revokeReactionLink(
 	auto y = top;
 	auto widthLeft = available;
 	for (const auto &reaction : _reactions) {
-		const auto chosen = (reaction.emoji == _data.chosenReaction);
+		const auto chosen = reaction.chosen;
 		const auto add = (reaction.countTextWidth > 0)
 			? st::reactionInfoDigitSkip
 			: st::reactionInfoBetween;
@@ -191,9 +201,11 @@ ClickHandlerPtr BottomInfo::revokeReactionLink(
 			if (controller->session().uniqueId() == sessionId) {
 				auto &owner = controller->session().data();
 				if (const auto item = owner.message(itemId)) {
-					const auto chosen = item->chosenReaction();
-					if (!chosen.isEmpty()) {
-						item->toggleReaction(chosen);
+					const auto chosen = item->chosenReactions();
+					if (!chosen.empty()) {
+						item->toggleReaction(
+							chosen.front(),
+							HistoryItem::ReactionSource::Existing);
 					}
 				}
 			}
@@ -348,7 +360,7 @@ void BottomInfo::paintReactions(
 		}
 		if (reaction.image.isNull()) {
 			reaction.image = _reactionsOwner->resolveImageFor(
-				reaction.emoji,
+				reaction.id,
 				::Data::Reactions::ImageSize::BottomInfo);
 		}
 		const auto image = QRect(
@@ -377,13 +389,21 @@ void BottomInfo::paintReactions(
 		widthLeft -= width + add;
 	}
 	if (!animations.empty()) {
-		context.reactionInfo->effectPaint = [=](QPainter &p) {
+		const auto now = context.now;
+		context.reactionInfo->effectPaint = [
+			now,
+			origin,
+			list = std::move(animations)
+		](QPainter &p) {
 			auto result = QRect();
-			for (const auto &single : animations) {
+			for (const auto &single : list) {
 				const auto area = single.animation->paintGetArea(
 					p,
 					origin,
-					single.target);
+					single.target,
+					QColor(255, 255, 255, 0), // Colored, for emoji status.
+					QRect(), // Clip, for emoji status.
+					now);
 				result = result.isEmpty() ? area : result.united(area);
 			}
 			return result;
@@ -426,7 +446,9 @@ void BottomInfo::layoutDateText() {
 	const auto name = _authorElided
 		? st::msgDateFont->elided(author, maxWidth - afterAuthorWidth)
 		: author;
-	const auto full = (_data.flags & Data::Flag::Sponsored)
+	const auto full = (_data.flags & Data::Flag::Recommended)
+		? tr::lng_recommended(tr::now)
+		: (_data.flags & Data::Flag::Sponsored)
 		? tr::lng_sponsored(tr::now)
 		: (_data.flags & Data::Flag::Imported)
 		? (date + ' ' + tr::lng_imported(tr::now))
@@ -471,19 +493,24 @@ void BottomInfo::layoutReactionsText() {
 	}
 	auto sorted = ranges::view::all(
 		_data.reactions
-	) | ranges::view::transform([](const auto &pair) {
-		return std::make_pair(pair.first, pair.second);
+	) | ranges::view::transform([](const MessageReaction &reaction) {
+		return not_null{ &reaction };
 	}) | ranges::to_vector;
-	ranges::sort(sorted, std::greater<>(), &std::pair<QString, int>::second);
+	ranges::sort(
+		sorted,
+		std::greater<>(),
+		&MessageReaction::count);
 
 	auto reactions = std::vector<Reaction>();
 	reactions.reserve(sorted.size());
-	for (const auto &[emoji, count] : sorted) {
-		const auto i = ranges::find(_reactions, emoji, &Reaction::emoji);
+	for (const auto &reaction : sorted) {
+		const auto &id = reaction->id;
+		const auto i = ranges::find(_reactions, id, &Reaction::id);
 		reactions.push_back((i != end(_reactions))
 			? std::move(*i)
-			: prepareReactionWithEmoji(emoji));
-		setReactionCount(reactions.back(), count);
+			: prepareReactionWithId(id));
+		reactions.back().chosen = reaction->my;
+		setReactionCount(reactions.back(), reaction->count);
 	}
 	_reactions = std::move(reactions);
 }
@@ -512,10 +539,10 @@ QSize BottomInfo::countOptimalSize() {
 	return QSize(width, st::msgDateFont->height);
 }
 
-BottomInfo::Reaction BottomInfo::prepareReactionWithEmoji(
-		const QString &emoji) {
-	auto result = Reaction{ .emoji = emoji };
-	_reactionsOwner->preloadImageFor(emoji);
+BottomInfo::Reaction BottomInfo::prepareReactionWithId(
+		const ReactionId &id) {
+	auto result = Reaction{ .id = id };
+	_reactionsOwner->preloadImageFor(id);
 	return result;
 }
 
@@ -533,9 +560,9 @@ void BottomInfo::setReactionCount(Reaction &reaction, int count) {
 }
 
 void BottomInfo::animateReaction(
-		ReactionAnimationArgs &&args,
+		Reactions::AnimationArgs &&args,
 		Fn<void()> repaint) {
-	const auto i = ranges::find(_reactions, args.emoji, &Reaction::emoji);
+	const auto i = ranges::find(_reactions, args.id, &Reaction::id);
 	if (i == end(_reactions)) {
 		return;
 	}
@@ -547,23 +574,23 @@ void BottomInfo::animateReaction(
 }
 
 auto BottomInfo::takeReactionAnimations()
--> base::flat_map<QString, std::unique_ptr<Reactions::Animation>> {
+-> base::flat_map<ReactionId, std::unique_ptr<Reactions::Animation>> {
 	auto result = base::flat_map<
-		QString,
+		ReactionId,
 		std::unique_ptr<Reactions::Animation>>();
 	for (auto &reaction : _reactions) {
 		if (reaction.animation) {
-			result.emplace(reaction.emoji, std::move(reaction.animation));
+			result.emplace(reaction.id, std::move(reaction.animation));
 		}
 	}
 	return result;
 }
 
 void BottomInfo::continueReactionAnimations(base::flat_map<
-		QString,
+		ReactionId,
 		std::unique_ptr<Reactions::Animation>> animations) {
-	for (auto &[emoji, animation] : animations) {
-		const auto i = ranges::find(_reactions, emoji, &Reaction::emoji);
+	for (auto &[id, animation] : animations) {
+		const auto i = ranges::find(_reactions, id, &Reaction::id);
 		if (i != end(_reactions)) {
 			i->animation = std::move(animation);
 		}
@@ -578,7 +605,6 @@ BottomInfo::Data BottomInfoDataFromMessage(not_null<Message*> message) {
 	result.date = message->dateTime();
 	if (message->embedReactionsInBottomInfo()) {
 		result.reactions = item->reactions();
-		result.chosenReaction = item->chosenReaction();
 	}
 	if (message->hasOutLayout()) {
 		result.flags |= Flag::OutLayout;
@@ -586,7 +612,10 @@ BottomInfo::Data BottomInfoDataFromMessage(not_null<Message*> message) {
 	if (message->context() == Context::Replies) {
 		result.flags |= Flag::RepliesContext;
 	}
-	if (item->isSponsored()) {
+	if (const auto sponsored = item->Get<HistoryMessageSponsored>()) {
+		if (sponsored->recommended) {
+			result.flags |= Flag::Recommended;
+		}
 		result.flags |= Flag::Sponsored;
 	}
 	if (item->isPinned() && message->context() != Context::Pinned) {
@@ -597,10 +626,8 @@ BottomInfo::Data BottomInfoDataFromMessage(not_null<Message*> message) {
 			result.author = msgsigned->author;
 		 }
 	}
-	if (!item->hideEditedBadge()) {
-		if (const auto edited = message->displayedEditBadge()) {
-			result.flags |= Flag::Edited;
-		}
+	if (message->displayedEditDate()) {
+		result.flags |= Flag::Edited;
 	}
 	if (const auto views = item->Get<HistoryMessageViews>()) {
 		if (views->views.count >= 0) {

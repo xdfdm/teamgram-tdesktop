@@ -62,6 +62,7 @@ class TopBarWidget;
 class RepliesMemento;
 class ComposeControls;
 class SendActionPainter;
+class StickerToast;
 
 class RepliesWidget final
 	: public Window::SectionWidget
@@ -142,7 +143,8 @@ public:
 	CopyRestrictionType listCopyRestrictionType(HistoryItem *item) override;
 	CopyRestrictionType listSelectRestrictionType() override;
 	auto listAllowedReactionsValue()
-		-> rpl::producer<std::optional<base::flat_set<QString>>> override;
+		->rpl::producer<Data::AllowedReactions> override;
+	void listShowPremiumToast(not_null<DocumentData*> document) override;
 
 protected:
 	void resizeEvent(QResizeEvent *e) override;
@@ -260,6 +262,7 @@ private:
 		Api::SendOptions options,
 		std::optional<MsgId> localMessageId);
 
+	void refreshJoinGroupButton();
 	[[nodiscard]] bool showSlowmodeError();
 	[[nodiscard]] std::optional<QString> writeRestriction() const;
 
@@ -274,6 +277,7 @@ private:
 	object_ptr<TopBarWidget> _topBar;
 	object_ptr<Ui::PlainShadow> _topBarShadow;
 	std::unique_ptr<ComposeControls> _composeControls;
+	std::unique_ptr<Ui::FlatButton> _joinGroup;
 	bool _skipScrollEvent = false;
 
 	std::unique_ptr<Ui::PinnedBar> _rootView;
@@ -282,6 +286,7 @@ private:
 	rpl::variable<bool> _rootVisible = false;
 
 	std::unique_ptr<Ui::ScrollArea> _scroll;
+	std::unique_ptr<HistoryView::StickerToast> _stickerToast;
 
 	std::vector<MsgId> _replyReturns;
 	HistoryItem *_replyReturn = nullptr;

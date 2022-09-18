@@ -42,11 +42,13 @@ struct FormDetails {
 	uint64 formId = 0;
 	QString url;
 	QString nativeProvider;
+	QString termsBotUsername;
 	QByteArray nativeParamsJson;
 	UserId botId = 0;
 	UserId providerId = 0;
 	bool canSaveCredentials = false;
 	bool passwordMissing = false;
+	bool termsAccepted = false;
 
 	[[nodiscard]] bool valid() const {
 		return !url.isEmpty();
@@ -111,7 +113,8 @@ struct NativePaymentMethod {
 
 struct PaymentMethod {
 	NativePaymentMethod native;
-	SavedCredentials savedCredentials;
+	std::vector<SavedCredentials> savedCredentials;
+	int savedCredentialsIndex = 0;
 	NewCredentials newCredentials;
 	Ui::PaymentMethodDetails ui;
 };
@@ -173,9 +176,25 @@ struct FormUpdate : std::variant<
 	using variant::variant;
 };
 
+struct InvoiceMessage {
+	not_null<PeerData*> peer;
+	MsgId itemId = 0;
+};
+
+struct InvoiceSlug {
+	not_null<Main::Session*> session;
+	QString slug;
+};
+
+struct InvoiceId {
+	std::variant<InvoiceMessage, InvoiceSlug> value;
+};
+
+[[nodiscard]] not_null<Main::Session*> SessionFromId(const InvoiceId &id);
+
 class Form final : public base::has_weak_ptr {
 public:
-	Form(not_null<PeerData*> peer, MsgId itemId, bool receipt);
+	Form(InvoiceId id, bool receipt);
 	~Form();
 
 	[[nodiscard]] const Ui::Invoice &invoice() const {
@@ -204,9 +223,11 @@ public:
 		const Ui::UncheckedCardDetails &details,
 		bool saveInformation);
 	void setPaymentCredentials(const NewCredentials &credentials);
+	void chooseSavedMethod(const QString &id);
 	void setHasPassword(bool has);
 	void setShippingOption(const QString &id);
 	void setTips(int64 value);
+	void acceptTerms();
 	void trustBot();
 	void submit();
 	void submit(const Core::CloudPasswordResult &result);
@@ -216,6 +237,7 @@ private:
 	void showProgress();
 	void hideProgress();
 
+	[[nodiscard]] Data::FileOrigin thumbnailFileOrigin() const;
 	void loadThumbnail(not_null<PhotoData*> photo);
 	[[nodiscard]] QImage prepareGoodThumbnail(
 		const std::shared_ptr<Data::PhotoMedia> &view) const;
@@ -234,15 +256,18 @@ private:
 	void processDetails(const MTPDpayments_paymentForm &data);
 	void processDetails(const MTPDpayments_paymentReceipt &data);
 	void processSavedInformation(const MTPDpaymentRequestedInfo &data);
-	void processSavedCredentials(
-		const MTPDpaymentSavedCredentialsCard &data);
+	void processAdditionalPaymentMethods(
+		const QVector<MTPPaymentFormMethod> &list);
 	void processShippingOptions(const QVector<MTPShippingOption> &data);
 	void fillPaymentMethodInformation();
 	void fillStripeNativeMethod(QJsonObject object);
 	void fillSmartGlocalNativeMethod(QJsonObject object);
 	void refreshPaymentMethodDetails();
+	void refreshSavedPaymentMethodDetails();
 	[[nodiscard]] QString defaultPhone() const;
 	[[nodiscard]] QString defaultCountry() const;
+
+	[[nodiscard]] MTPInputInvoice inputInvoice() const;
 
 	void validateCard(
 		const StripePaymentMethod &method,
@@ -263,10 +288,10 @@ private:
 	[[nodiscard]] Error cardErrorLocal(
 		const Ui::UncheckedCardDetails &details) const;
 
+	const InvoiceId _id;
 	const not_null<Main::Session*> _session;
+
 	MTP::Sender _api;
-	not_null<PeerData*> _peer;
-	MsgId _msgId = 0;
 	bool _receiptMode = false;
 
 	Ui::Invoice _invoice;

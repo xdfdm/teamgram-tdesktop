@@ -39,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/toast/toast.h"
 #include "data/data_changes.h"
 #include "core/application.h"
+#include "core/core_settings.h"
 #include "ui/boxes/single_choice_box.h"
 #include "webrtc/webrtc_audio_input_tester.h"
 #include "webrtc/webrtc_media_devices.h"
@@ -155,7 +156,7 @@ object_ptr<ShareBox> ShareInviteLinkBox(
 			auto text = TextWithEntities();
 			if (result.size() > 1) {
 				text.append(
-					Ui::Text::Bold(error.second->name)
+					Ui::Text::Bold(error.second->name())
 				).append("\n\n");
 			}
 			text.append(error.first);
@@ -593,7 +594,7 @@ void SettingsBox(
 		});
 		const auto showToast = crl::guard(box, [=](QString text) {
 			Ui::ShowMultilineToast({
-				.parentOverride = box->getDelegate()->outerContainer(),
+				.parentOverride = Ui::BoxShow(box).toastParent(),
 				.text = { text },
 			});
 		});
@@ -636,7 +637,7 @@ void SettingsBox(
 				QGuiApplication::clipboard()->setText(link);
 				if (weakBox) {
 					Ui::ShowMultilineToast({
-						.parentOverride = box->getDelegate()->outerContainer(),
+						.parentOverride = Ui::BoxShow(box).toastParent(),
 						.text = { tr::lng_create_channel_link_copied(tr::now) },
 					});
 				}
@@ -732,18 +733,10 @@ void SettingsBox(
 			return true;
 		});
 
-
 		StartRtmpProcess::FillRtmpRows(
 			layout,
 			false,
-			[=](object_ptr<Ui::BoxContent> &&object) {
-				box->getDelegate()->show(std::move(object));
-			},
-			[=](QString text) {
-				Ui::Toast::Show(
-					box->getDelegate()->outerContainer(),
-					text);
-			},
+			std::make_shared<Ui::BoxShow>(box),
 			state->data.events(),
 			&st::groupCallBoxLabel,
 			&st::groupCallSettingsRtmpShowButton,

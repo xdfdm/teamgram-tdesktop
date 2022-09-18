@@ -19,7 +19,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "mainwidget.h"
 #include "mainwindow.h"
 #include "main/main_session.h"
-#include "menu/add_action_callback_factory.h"
 #include "mtproto/mtproto_config.h"
 #include "lang/lang_keys.h"
 #include "core/shortcuts.h"
@@ -27,6 +26,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/core_settings.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/widgets/menu/menu_add_action_callback_factory.h"
 #include "ui/effects/radial_animation.h"
 #include "ui/toasts/common_toasts.h"
 #include "ui/boxes/report_box.h" // Ui::ReportReason
@@ -84,6 +84,7 @@ TopBarWidget::TopBarWidget(
 	not_null<Window::SessionController*> controller)
 : RpWidget(parent)
 , _controller(controller)
+, _primaryWindow(controller->isPrimary())
 , _clear(this, tr::lng_selected_clear(), st::topBarClearButton)
 , _forward(this, tr::lng_selected_forward(), st::defaultActiveButton)
 , _sendNow(this, tr::lng_selected_send_now(), st::defaultActiveButton)
@@ -164,6 +165,7 @@ TopBarWidget::TopBarWidget(
 		| UpdateFlag::Members
 		| UpdateFlag::SupportInfo
 		| UpdateFlag::Rights
+		| UpdateFlag::EmojiStatus
 	) | rpl::start_with_next([=](const Data::PeerUpdate &update) {
 		if (update.flags & UpdateFlag::HasCalls) {
 			if (update.peer->isUser()
@@ -180,6 +182,10 @@ TopBarWidget::TopBarWidget(
 				| UpdateFlag::Members
 				| UpdateFlag::SupportInfo)) {
 			updateOnlineDisplay();
+		}
+		if ((update.flags & UpdateFlag::EmojiStatus)
+			&& (_activeChat.key.peer() == update.peer)) {
+			this->update();
 		}
 	}, lifetime());
 
@@ -306,7 +312,7 @@ void TopBarWidget::showPeerMenu() {
 	if (!created) {
 		return;
 	}
-	const auto addAction = Menu::CreateAddActionCallback(_menu);
+	const auto addAction = Ui::Menu::CreateAddActionCallback(_menu);
 	Window::FillDialogsEntryMenu(_controller, _activeChat, addAction);
 	if (_menu->empty()) {
 		_menu = nullptr;
@@ -327,24 +333,29 @@ void TopBarWidget::showGroupCallMenu(not_null<PeerData*> peer) {
 	const auto callback = [=](Calls::StartGroupCallArgs &&args) {
 		controller->startOrJoinGroupCall(peer, std::move(args));
 	};
+	const auto rtmpCallback = [=] {
+		Core::App().calls().showStartWithRtmp(
+			std::make_shared<Window::Show>(controller),
+			peer);
+	};
 	const auto livestream = !peer->isMegagroup() && peer->isChannel();
 	_menu->addAction(
-		livestream
-			? tr::lng_menu_start_group_call_channel(tr::now)
-			: tr::lng_menu_start_group_call(tr::now),
+		(livestream
+			? tr::lng_menu_start_group_call_channel
+			: tr::lng_menu_start_group_call)(tr::now),
 		[=] { callback({}); },
 		&st::menuIconStartStream);
 	_menu->addAction(
-		livestream
-			? tr::lng_menu_start_group_call_scheduled_channel(tr::now)
-			: tr::lng_menu_start_group_call_scheduled(tr::now),
+		(livestream
+			? tr::lng_menu_start_group_call_scheduled_channel
+			: tr::lng_menu_start_group_call_scheduled)(tr::now),
 		[=] { callback({ .scheduleNeeded = true }); },
 		&st::menuIconReschedule);
 	_menu->addAction(
-		livestream
-			? tr::lng_menu_start_group_call_with_channel(tr::now)
-			: tr::lng_menu_start_group_call_with(tr::now),
-		[=] { callback({ .rtmpNeeded = true }); },
+		(livestream
+			? tr::lng_menu_start_group_call_with_channel
+			: tr::lng_menu_start_group_call_with)(tr::now),
+		rtmpCallback,
 		&st::menuIconStartStreamWith);
 	_menu->setForcedOrigin(Ui::PanelAnimation::Origin::TopRight);
 	_menu->popup(mapToGlobal(QPoint(
@@ -424,7 +435,10 @@ void TopBarWidget::paintTopBar(Painter &p) {
 	auto nameleft = _leftTaken;
 	auto nametop = st::topBarArrowPadding.top();
 	auto statustop = st::topBarHeight - st::topBarArrowPadding.bottom() - st::dialogsTextFont->height;
-	auto availableWidth = width() - _rightTaken - nameleft;
+	auto availableWidth = width()
+		- _rightTaken
+		- nameleft
+		- st::topBarNameRightPadding;
 
 	if (_chooseForReportReason) {
 		const auto text = [&] {
@@ -510,25 +524,38 @@ void TopBarWidget::paintTopBar(Painter &p) {
 		}
 	} else if (const auto history = _activeChat.key.history()) {
 		const auto peer = history->peer;
-		const auto &text = peer->topBarNameText();
-		const auto badgeStyle = Ui::PeerBadgeStyle{
-			nullptr,
-			&st::attentionButtonFg };
-		const auto badgeWidth = Ui::DrawPeerBadgeGetWidth(
-			peer,
+		if (_titleNameVersion < peer->nameVersion()) {
+			_titleNameVersion = peer->nameVersion();
+			_title.setText(
+				st::msgNameStyle,
+				peer->topBarNameText(),
+				Ui::NameTextOptions());
+		}
+		const auto badgeWidth = _titleBadge.drawGetWidth(
 			p,
 			QRect(
 				nameleft,
 				nametop,
 				availableWidth,
 				st::msgNameStyle.font->height),
-			text.maxWidth(),
+			_title.maxWidth(),
 			width(),
-			badgeStyle);
+			{
+				.peer = peer,
+				.verified = &st::dialogsVerifiedIcon,
+				.premium = &st::dialogsPremiumIcon,
+				.scam = &st::attentionButtonFg,
+				.premiumFg = &st::dialogsVerifiedIconBg,
+				.preview = st::windowBgOver->c,
+				.customEmojiRepaint = [=] { update(); },
+				.now = now,
+				.paused = _controller->isGifPausedAtLeastFor(
+					Window::GifPauseReason::Any),
+			});
 		const auto namewidth = availableWidth - badgeWidth;
 
 		p.setPen(st::dialogsNameFg);
-		peer->topBarNameText().drawElided(
+		_title.drawElided(
 			p,
 			nameleft,
 			nametop,
@@ -681,6 +708,8 @@ void TopBarWidget::setActiveChat(
 	update();
 
 	if (peerChanged) {
+		_titleBadge.unload();
+		_titleNameVersion = 0;
 		_emojiInteractionSeen = nullptr;
 		_activeChatLifetime.destroy();
 		if (const auto history = _activeChat.key.history()) {
@@ -845,10 +874,10 @@ void TopBarWidget::updateControlsGeometry() {
 		_leftTaken = smallDialogsColumn ? (width() - _back->width()) / 2 : 0;
 		_back->moveToLeft(_leftTaken, otherButtonsTop);
 		_leftTaken += _back->width();
-		if (_info && !_info->isHidden()) {
-			_info->moveToLeft(_leftTaken, otherButtonsTop);
-			_leftTaken += _info->width();
-		}
+	}
+	if (_info && !_info->isHidden()) {
+		_info->moveToLeft(_leftTaken, otherButtonsTop);
+		_leftTaken += _info->width();
 	}
 
 	_rightTaken = 0;
@@ -907,7 +936,8 @@ void TopBarWidget::updateControlsVisibility() {
 	_back->setVisible(backVisible && !_chooseForReportReason);
 	_cancelChoose->setVisible(_chooseForReportReason.has_value());
 	if (_info) {
-		_info->setVisible(isOneColumn && !_chooseForReportReason);
+		_info->setVisible((isOneColumn || !_primaryWindow)
+			&& !_chooseForReportReason);
 	}
 	if (_unreadBadge) {
 		_unreadBadge->setVisible(!_chooseForReportReason);

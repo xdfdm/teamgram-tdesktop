@@ -20,6 +20,8 @@ namespace Dialogs::Ui {
 
 using namespace ::Ui;
 
+class VideoUserpic;
+
 const style::icon *ChatTypeIcon(
 	not_null<PeerData*> peer,
 	bool active,
@@ -30,11 +32,13 @@ public:
 	static void paint(
 		Painter &p,
 		not_null<const Row*> row,
+		VideoUserpic *videoUserpic,
 		FilterId filterId,
 		int fullWidth,
 		bool active,
 		bool selected,
-		crl::time ms);
+		crl::time ms,
+		bool paused);
 	static void paint(
 		Painter &p,
 		not_null<const FakeRow*> row,

@@ -14,6 +14,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "lang/lang_instance.h"
 #include "lang/lang_cloud_manager.h"
 #include "main/main_account.h"
+#include "main/main_app_config.h"
 #include "main/main_domain.h"
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
@@ -200,6 +201,7 @@ void Step::createSession(
 	if (!photo.isNull()) {
 		session.api().peerPhoto().upload(session.user(), std::move(photo));
 	}
+	account->appConfig().refresh();
 	if (session.supportMode()) {
 		PrepareSupportMode(&session);
 	}
@@ -309,6 +311,9 @@ bool Step::paintAnimated(Painter &p, QRect clip) {
 }
 
 void Step::fillSentCodeData(const MTPDauth_sentCode &data) {
+	const auto bad = [](const char *type) {
+		LOG(("API Error: Should not be '%1'.").arg(type));
+	};
 	data.vtype().match([&](const MTPDauth_sentCodeTypeApp &data) {
 		getData()->codeByTelegram = true;
 		getData()->codeLength = data.vlength().v;
@@ -319,9 +324,13 @@ void Step::fillSentCodeData(const MTPDauth_sentCode &data) {
 		getData()->codeByTelegram = false;
 		getData()->codeLength = data.vlength().v;
 	}, [&](const MTPDauth_sentCodeTypeFlashCall &) {
-		LOG(("Error: should not be flashcall!"));
-	}, [&](const MTPDauth_sentCodeTypeMissedCall &data) {
-		LOG(("Error: should not be missedcall!"));
+		bad("FlashCall");
+	}, [&](const MTPDauth_sentCodeTypeMissedCall &) {
+		bad("MissedCall");
+	}, [&](const MTPDauth_sentCodeTypeEmailCode &) {
+		bad("EmailCode");
+	}, [&](const MTPDauth_sentCodeTypeSetUpEmailRequired &) {
+		bad("SetUpEmailRequired");
 	});
 }
 

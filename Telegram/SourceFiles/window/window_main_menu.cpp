@@ -22,6 +22,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/wrap/vertical_layout_reorder.h"
 #include "ui/text/format_values.h" // Ui::FormatPhone
 #include "ui/text/text_utilities.h"
+#include "ui/text/text_options.h"
 #include "ui/special_buttons.h"
 #include "ui/empty_userpic.h"
 #include "dialogs/ui/dialogs_layout.h"
@@ -33,10 +34,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_common.h"
 #include "settings/settings_calls.h"
 #include "settings/settings_information.h"
+#include "info/profile/info_profile_badge.h"
+#include "info/profile/info_profile_emoji_status_panel.h"
 #include "base/qt_signal_producer.h"
 #include "boxes/about_box.h"
 #include "ui/boxes/confirm_box.h"
 #include "boxes/peer_list_controllers.h"
+#include "boxes/premium_preview_box.h"
 #include "calls/calls_box_controller.h"
 #include "lang/lang_keys.h"
 #include "core/click_handler_types.h"
@@ -65,8 +69,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtGui/QWindow>
 #include <QtGui/QScreen>
 
+#include <QtGui/QGuiApplication>
+#include <QtGui/QClipboard>
+
 namespace Window {
 namespace {
+
+constexpr auto kPlayStatusLimit = 2;
 
 void ShowCallsBox(not_null<Window::SessionController*> window) {
 	auto controller = std::make_unique<Calls::BoxController>(window);
@@ -109,6 +118,24 @@ void ShowCallsBox(not_null<Window::SessionController*> window) {
 	window->show(Box<PeerListBox>(std::move(controller), initBox));
 }
 
+[[nodiscard]] rpl::producer<TextWithEntities> SetStatusLabel(
+		not_null<Main::Session*> session) {
+	const auto self = session->user();
+	return session->changes().peerFlagsValue(
+		self,
+		Data::PeerUpdate::Flag::EmojiStatus
+	) | rpl::map([=] {
+		return (self->emojiStatusId() != 0);
+	}) | rpl::distinct_until_changed() | rpl::map([](bool has) {
+		const auto makeLink = [](const QString &text) {
+			return Ui::Text::Link(text);
+		};
+		return (has
+			? tr::lng_menu_change_status
+			: tr::lng_menu_set_status)(makeLink);
+	}) | rpl::flatten_latest();
+}
+
 } // namespace
 
 class MainMenu::ToggleAccountsButton final : public Ui::AbstractButton {
@@ -116,7 +143,10 @@ public:
 	explicit ToggleAccountsButton(QWidget *parent);
 
 	[[nodiscard]] int rightSkip() const {
-		return _rightSkip;
+		return _rightSkip.current();
+	}
+	[[nodiscard]] rpl::producer<int> rightSkipValue() const {
+		return _rightSkip.value();
 	}
 
 private:
@@ -126,7 +156,7 @@ private:
 	void validateUnreadBadge();
 	[[nodiscard]] QString computeUnreadBadge() const;
 
-	int _rightSkip = 0;
+	rpl::variable<int> _rightSkip = 0;
 	Ui::Animations::Simple _toggledAnimation;
 	bool _toggled = false;
 
@@ -232,7 +262,7 @@ void MainMenu::ToggleAccountsButton::paintUnreadBadge(Painter &p) {
 		return;
 	}
 
-	auto st = Settings::BadgeStyle();
+	auto st = Settings::Badge::Style();
 	const auto right = width()
 		- st::mainMenuTogglePosition.x()
 		- st::mainMenuToggleSize * 3;
@@ -254,12 +284,13 @@ void MainMenu::ToggleAccountsButton::validateUnreadBadge() {
 	}
 	_unreadBadge = computeUnreadBadge();
 
-	_rightSkip = base;
+	auto skip = base;
 	if (!_unreadBadge.isEmpty()) {
-		const auto st = Settings::BadgeStyle();
-		_rightSkip += 2 * st::mainMenuToggleSize
+		const auto st = Settings::Badge::Style();
+		skip += 2 * st::mainMenuToggleSize
 			+ Dialogs::Ui::CountUnreadBadgeSize(_unreadBadge, st).width();
 	}
+	_rightSkip = skip;
 }
 
 QString MainMenu::ToggleAccountsButton::computeUnreadBadge() const {
@@ -327,6 +358,16 @@ MainMenu::MainMenu(
 	Ui::UserpicButton::Role::Custom,
 	st::mainMenuUserpic)
 , _toggleAccounts(this)
+, _setEmojiStatus(this, SetStatusLabel(&controller->session()))
+, _emojiStatusPanel(std::make_unique<Info::Profile::EmojiStatusPanel>())
+, _badge(std::make_unique<Info::Profile::Badge>(
+	this,
+	st::settingsInfoPeerBadge,
+	controller->session().user(),
+	_emojiStatusPanel.get(),
+	[=] { return controller->isGifPausedAtLeastFor(GifPauseReason::Layer); },
+	kPlayStatusLimit,
+	Info::Profile::BadgeType::Premium))
 , _scroll(this, st::defaultSolidScroll)
 , _inner(_scroll->setOwnedWidget(
 	object_ptr<Ui::VerticalLayout>(_scroll.data())))
@@ -352,6 +393,7 @@ MainMenu::MainMenu(
 
 	setupUserpicButton();
 	setupAccountsToggle();
+	setupSetEmojiStatus();
 	setupAccounts();
 	setupArchive();
 	setupMenu();
@@ -412,20 +454,40 @@ MainMenu::MainMenu(
 			controller->show(Box<AboutBox>());
 		}));
 
+	rpl::combine(
+		_toggleAccounts->rightSkipValue(),
+		rpl::single(rpl::empty) | rpl::then(_badge->updated())
+	) | rpl::start_with_next([=] {
+		moveBadge();
+	}, lifetime());
+	_badge->setPremiumClickCallback([=] {
+		chooseEmojiStatus();
+	});
+
 	_controller->session().downloaderTaskFinished(
 	) | rpl::start_with_next([=] {
 		update();
 	}, lifetime());
 
-	_controller->session().changes().peerUpdates(
-		_controller->session().user(),
-		Data::PeerUpdate::Flag::PhoneNumber
-	) | rpl::start_with_next([=] {
-		updatePhone();
-	}, lifetime());
-
-	updatePhone();
 	initResetScaleButton();
+}
+
+MainMenu::~MainMenu() = default;
+
+void MainMenu::moveBadge() {
+	if (!_badge->widget()) {
+		return;
+	}
+	const auto available = width()
+		- st::mainMenuCoverNameLeft
+		- _toggleAccounts->rightSkip()
+		- _badge->widget()->width();
+	const auto left = st::mainMenuCoverNameLeft
+		+ std::min(_name.maxWidth() + st::semiboldFont->spacew, available);
+	_badge->move(
+		left,
+		st::mainMenuCoverNameTop,
+		st::mainMenuCoverNameTop + st::msgNameStyle.font->height);
 }
 
 void MainMenu::setupArchive() {
@@ -510,13 +572,13 @@ void MainMenu::setupArchive() {
 		}) | rpl::take(1);
 
 	using namespace Settings;
-	AddUnreadBadge(button, rpl::single(rpl::empty) | rpl::then(std::move(
+	Badge::AddUnread(button, rpl::single(rpl::empty) | rpl::then(std::move(
 		folderValue
 	) | rpl::map([=](not_null<Data::Folder*> folder) {
 		return folder->owner().chatsList(folder)->unreadStateChanges();
 	}) | rpl::flatten_latest() | rpl::to_empty) | rpl::map([=] {
 		const auto loaded = folder();
-		return UnreadBadge{
+		return Badge::UnreadBadge{
 			loaded ? loaded->chatListUnreadCount() : 0,
 			true,
 		};
@@ -568,7 +630,18 @@ void MainMenu::setupAccounts() {
 
 void MainMenu::setupAccountsToggle() {
 	_toggleAccounts->show();
-	_toggleAccounts->setClickedCallback([=] { toggleAccounts(); });
+	_toggleAccounts->setAcceptBoth();
+	_toggleAccounts->addClickHandler([=](Qt::MouseButton button) {
+		if (button == Qt::LeftButton) {
+			toggleAccounts();
+		}
+	});
+}
+
+void MainMenu::setupSetEmojiStatus() {
+	_setEmojiStatus->overrideLinkClickHandler([=] {
+		chooseEmojiStatus();
+	});
 }
 
 void MainMenu::parentResized() {
@@ -690,8 +763,6 @@ void MainMenu::setupMenu() {
 			_nightThemeSwitches.fire_copy(*darkMode);
 		}
 	}, _nightThemeToggle->lifetime());
-
-	updatePhone();
 }
 
 void MainMenu::resizeEvent(QResizeEvent *e) {
@@ -706,6 +777,10 @@ void MainMenu::updateControlsGeometry() {
 	if (_resetScaleButton) {
 		_resetScaleButton->moveToRight(0, 0);
 	}
+	_setEmojiStatus->moveToLeft(
+		st::mainMenuCoverStatusLeft,
+		st::mainMenuCoverStatusTop,
+		width());
 	_toggleAccounts->setGeometry(
 		0,
 		st::mainMenuCoverNameTop,
@@ -731,9 +806,12 @@ void MainMenu::updateInnerControlsGeometry() {
 	}
 }
 
-void MainMenu::updatePhone() {
-	_phoneText = Ui::FormatPhone(_controller->session().user()->phone());
-	update();
+void MainMenu::chooseEmojiStatus() {
+	if (const auto widget = _badge->widget()) {
+		_emojiStatusPanel->show(_controller, widget, _badge->sizeTag());
+	} else {
+		ShowPremiumPreviewBox(_controller, PremiumPreview::EmojiStatus);
+	}
 }
 
 void MainMenu::paintEvent(QPaintEvent *e) {
@@ -747,21 +825,26 @@ void MainMenu::paintEvent(QPaintEvent *e) {
 			- st::mainMenuCoverNameLeft
 			- _toggleAccounts->rightSkip();
 
+		const auto user = _controller->session().user();
+		if (_nameVersion < user->nameVersion()) {
+			_nameVersion = user->nameVersion();
+			_name.setText(
+				st::msgNameStyle,
+				user->name(),
+				Ui::NameTextOptions());
+			moveBadge();
+		}
 		p.setFont(st::semiboldFont);
 		p.setPen(st::windowBoldFg);
-		_controller->session().user()->nameText().drawLeftElided(
+		_name.drawLeftElided(
 			p,
 			st::mainMenuCoverNameLeft,
 			st::mainMenuCoverNameTop,
-			widthText,
+			(widthText
+				- (_badge->widget()
+					? (st::semiboldFont->spacew + _badge->widget()->width())
+					: 0)),
 			width());
-		p.setFont(st::mainMenuPhoneFont);
-		p.setPen(st::windowSubTextFg);
-		p.drawTextLeft(
-			st::mainMenuCoverStatusLeft,
-			st::mainMenuCoverStatusTop,
-			width(),
-			_phoneText);
 	}
 }
 

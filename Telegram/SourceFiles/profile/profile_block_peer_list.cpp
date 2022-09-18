@@ -99,7 +99,7 @@ void PeerListWidget::paintItem(Painter &p, int x, int y, Item *item, bool select
 	if (item->name.isEmpty()) {
 		item->name.setText(
 			st::msgNameStyle,
-			item->peer->name,
+			item->peer->name(),
 			Ui::NameTextOptions());
 	}
 	int nameLeft = x + _st.namePosition.x();
@@ -110,14 +110,11 @@ void PeerListWidget::paintItem(Painter &p, int x, int y, Item *item, bool select
 		p.setPen(st::windowActiveTextFg);
 		p.drawTextLeft(nameLeft + nameWidth - _removeWidth, nameTop, width(), _removeText, _removeWidth);
 		nameWidth -= _removeWidth + skip;
-	}
-	if (item->adminState != Item::AdminState::None) {
-		nameWidth -= st::profileMemberAdminIcon.width();
-		auto iconLeft = nameLeft + qMin(nameWidth, item->name.maxWidth());
-		auto &icon = (item->adminState == Item::AdminState::Creator)
-			? (selected ? st::profileMemberCreatorIconOver : st::profileMemberCreatorIcon)
-			: (selected ? st::profileMemberAdminIconOver : st::profileMemberAdminIcon);
-		icon.paint(p, QPoint(iconLeft, nameTop), width());
+	} else if (item->rank) {
+		p.setFont(st::normalFont);
+		p.setPen(st::windowActiveTextFg);
+		p.drawTextLeft(nameLeft + nameWidth - item->rankWidth, nameTop, width(), *item->rank, item->rankWidth);
+		nameWidth -= item->rankWidth + skip;
 	}
 	p.setPen(st::profileMemberNameFg);
 	item->name.drawLeftElided(p, nameLeft, nameTop, nameWidth, width());

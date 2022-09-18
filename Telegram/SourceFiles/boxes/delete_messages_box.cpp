@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_chat_participants.h"
 #include "api/api_messages_search.h"
 #include "base/unixtime.h"
+#include "core/application.h"
 #include "data/data_channel.h"
 #include "data/data_chat.h"
 #include "data/data_histories.h"
@@ -26,8 +27,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/checkbox.h"
 #include "ui/widgets/labels.h"
-#include "window/window_session_controller.h"
-#include "facades.h" // Ui::showChatsList
 #include "styles/style_layers.h"
 #include "styles/style_boxes.h"
 
@@ -121,20 +120,29 @@ void DeleteMessagesBox::prepare() {
 				: peer->isSelf()
 				? tr::lng_sure_delete_saved_messages(tr::now)
 				: peer->isUser()
-				? tr::lng_sure_delete_history(tr::now, lt_contact, peer->name)
+				? tr::lng_sure_delete_history(
+					tr::now,
+					lt_contact,
+					peer->name())
 				: tr::lng_sure_delete_group_history(
 					tr::now,
 					lt_group,
-					peer->name);
+					peer->name());
 			details = Ui::Text::RichLangValue(details.text);
 			deleteStyle = &st::attentionBoxButton;
 		} else {
 			details.text = peer->isSelf()
 				? tr::lng_sure_delete_saved_messages(tr::now)
 				: peer->isUser()
-				? tr::lng_sure_delete_history(tr::now, lt_contact, peer->name)
+				? tr::lng_sure_delete_history(
+					tr::now,
+					lt_contact,
+					peer->name())
 				: peer->isChat()
-				? tr::lng_sure_delete_and_exit(tr::now, lt_group, peer->name)
+				? tr::lng_sure_delete_and_exit(
+					tr::now,
+					lt_group,
+					peer->name())
 				: peer->isMegagroup()
 				? tr::lng_sure_leave_group(tr::now)
 				: tr::lng_sure_leave_channel(tr::now);
@@ -190,7 +198,7 @@ void DeleteMessagesBox::prepare() {
 				tr::lng_delete_all_from_user(
 					tr::now,
 					lt_user,
-					Ui::Text::Bold(_moderateFrom->name),
+					Ui::Text::Bold(_moderateFrom->name()),
 					Ui::Text::WithEntities),
 				false,
 				st::defaultBoxCheckbox);
@@ -338,8 +346,6 @@ auto DeleteMessagesBox::revokeText(not_null<PeerData*> peer) const
 				lt_user,
 				{ user->firstName },
 				Ui::Text::RichLangValue);
-		} else if (_wipeHistoryJustClear) {
-			return std::nullopt;
 		} else {
 			result.checkbox.text = tr::lng_delete_for_everyone_check(tr::now);
 		}
@@ -493,11 +499,7 @@ void DeleteMessagesBox::deleteAndClear() {
 		if (justClear) {
 			session->api().clearHistory(peer, revoke);
 		} else {
-			for (const auto &controller : session->windows()) {
-				if (controller->activeChatCurrent().peer() == peer) {
-					Ui::showChatsList(session);
-				}
-			}
+			Core::App().closeChatFromWindows(peer);
 			// Don't delete old history by default,
 			// because Android app doesn't.
 			//

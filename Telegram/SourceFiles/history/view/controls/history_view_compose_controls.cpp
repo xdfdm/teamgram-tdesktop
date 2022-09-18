@@ -20,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "chat_helpers/field_autocomplete.h"
 #include "core/application.h"
 #include "core/core_settings.h"
+#include "core/ui_integration.h"
 #include "data/notify/data_notify_settings.h"
 #include "data/data_changes.h"
 #include "data/data_drafts.h"
@@ -29,6 +30,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_chat.h"
 #include "data/data_channel.h"
 #include "data/stickers/data_stickers.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "data/data_web_page.h"
 #include "storage/storage_account.h"
 #include "apiwrap.h"
@@ -122,7 +124,6 @@ public:
 
 private:
 	void updatePreview();
-	void gotPreview(const MTPmessageMedia &result, const QString &links);
 	void getWebPagePreview();
 
 	const not_null<History*> _history;
@@ -243,37 +244,6 @@ void WebpageProcessor::updatePreview() {
 	_paintRequests.fire({});
 }
 
-void WebpageProcessor::gotPreview(
-		const MTPmessageMedia &result,
-		const QString &links) {
-	if (_previewRequest) {
-		_previewRequest = 0;
-	}
-	result.match([=](const MTPDmessageMediaWebPage &d) {
-		const auto page = _history->owner().processWebpage(d.vwebpage());
-		_previewCache.insert({ links, page->id });
-		auto &till = page->pendingTill;
-		if (till > 0 && till <= base::unixtime::now()) {
-			till = -1;
-		}
-		if (links == _previewLinks
-			&& _previewState == Data::PreviewState::Allowed) {
-			_previewData = (page->id && page->pendingTill >= 0)
-				? page.get()
-				: nullptr;
-			updatePreview();
-		}
-	}, [=](const MTPDmessageMediaEmpty &d) {
-		_previewCache.insert({ links, 0 });
-		if (links == _previewLinks
-			&& _previewState == Data::PreviewState::Allowed) {
-			_previewData = nullptr;
-			updatePreview();
-		}
-	}, [](const auto &d) {
-	});
-}
-
 void WebpageProcessor::getWebPagePreview() {
 	const auto links = _previewLinks;
 	_previewRequest = _api.request(
@@ -282,7 +252,32 @@ void WebpageProcessor::getWebPagePreview() {
 			MTP_string(links),
 			MTPVector<MTPMessageEntity>()
 	)).done([=](const MTPMessageMedia &result) {
-		gotPreview(result, links);
+		_previewRequest = 0;
+		result.match([=](const MTPDmessageMediaWebPage &d) {
+			const auto page = _history->owner().processWebpage(d.vwebpage());
+			_previewCache.insert({ links, page->id });
+			auto &till = page->pendingTill;
+			if (till > 0 && till <= base::unixtime::now()) {
+				till = -1;
+			}
+			if (links == _previewLinks
+				&& _previewState == Data::PreviewState::Allowed) {
+				_previewData = (page->id && page->pendingTill >= 0)
+					? page.get()
+					: nullptr;
+				updatePreview();
+			}
+		}, [=](const MTPDmessageMediaEmpty &d) {
+			_previewCache.insert({ links, 0 });
+			if (links == _previewLinks
+				&& _previewState == Data::PreviewState::Allowed) {
+				_previewData = nullptr;
+				updatePreview();
+			}
+		}, [](const auto &d) {
+		});
+	}).fail([=] {
+		_previewRequest = 0;
 	}).send();
 }
 
@@ -370,6 +365,7 @@ private:
 	void setShownMessage(HistoryItem *message);
 	void resolveMessageData();
 	void updateShownMessageText();
+	void customEmojiRepaint();
 
 	void paintWebPage(Painter &p, not_null<PeerData*> peer);
 	void paintEditOrReplyToMessage(Painter &p);
@@ -399,6 +395,7 @@ private:
 	Ui::Text::String _shownMessageName;
 	Ui::Text::String _shownMessageText;
 	int _shownMessageNameVersion = -1;
+	bool _repaintScheduled = false;
 
 	const not_null<Data::Session*> _data;
 	const not_null<Ui::IconButton*> _cancel;
@@ -553,10 +550,23 @@ void FieldHeader::init() {
 void FieldHeader::updateShownMessageText() {
 	Expects(_shownMessage != nullptr);
 
+	const auto context = Core::MarkedTextContext{
+		.session = &_data->session(),
+		.customEmojiRepaint = [=] { customEmojiRepaint(); },
+	};
 	_shownMessageText.setMarkedText(
 		st::messageTextStyle,
 		_shownMessage->inReplyText(),
-		Ui::DialogTextOptions());
+		Ui::DialogTextOptions(),
+		context);
+}
+
+void FieldHeader::customEmojiRepaint() {
+	if (_repaintScheduled) {
+		return;
+	}
+	_repaintScheduled = true;
+	update();
 }
 
 void FieldHeader::setShownMessage(HistoryItem *item) {
@@ -691,6 +701,8 @@ void FieldHeader::paintWebPage(Painter &p, not_null<PeerData*> context) {
 }
 
 void FieldHeader::paintEditOrReplyToMessage(Painter &p) {
+	_repaintScheduled = false;
+
 	const auto replySkip = st::historyReplySkip;
 	const auto availableWidth = width()
 		- replySkip
@@ -715,12 +727,12 @@ void FieldHeader::paintEditOrReplyToMessage(Painter &p) {
 		const auto user = _shownMessage->displayFrom()
 			? _shownMessage->displayFrom()
 			: _shownMessage->author().get();
-		if (user->nameVersion > _shownMessageNameVersion) {
+		if (_shownMessageNameVersion < user->nameVersion()) {
 			_shownMessageName.setText(
 				st::msgNameStyle,
-				user->name,
+				user->name(),
 				Ui::NameTextOptions());
-			_shownMessageNameVersion = user->nameVersion;
+			_shownMessageNameVersion = user->nameVersion();
 		}
 	}
 
@@ -817,6 +829,7 @@ MessageToEdit FieldHeader::queryToEdit() {
 ComposeControls::ComposeControls(
 	not_null<Ui::RpWidget*> parent,
 	not_null<Window::SessionController*> window,
+	Fn<void(not_null<DocumentData*>)> unavailableEmojiPasted,
 	Mode mode,
 	SendMenu::Type sendMenuType)
 : _parent(parent)
@@ -853,6 +866,7 @@ ComposeControls::ComposeControls(
 		_send,
 		st::historySendSize.height()))
 , _sendMenuType(sendMenuType)
+, _unavailableEmojiPasted(unavailableEmojiPasted)
 , _saveDraftTimer([=] { saveDraft(); }) {
 	init();
 }
@@ -1058,7 +1072,7 @@ rpl::producer<PhotoChosen> ComposeControls::photoChosen() const {
 }
 
 auto ComposeControls::inlineResultChosen() const
-->rpl::producer<ChatHelpers::TabbedSelector::InlineChosen> {
+-> rpl::producer<InlineChosen> {
 	return _inlineResultChosen.events();
 }
 
@@ -1215,6 +1229,19 @@ void ComposeControls::checkAutocomplete() {
 		autocomplete.fromStart);
 }
 
+void ComposeControls::hide() {
+	showStarted();
+	_hidden = true;
+}
+
+void ComposeControls::show() {
+	if (_hidden.current()) {
+		_hidden = false;
+		showFinished();
+		checkAutocomplete();
+	}
+}
+
 void ComposeControls::init() {
 	initField();
 	initTabbedSelector();
@@ -1223,6 +1250,11 @@ void ComposeControls::init() {
 	initWriteRestriction();
 	initVoiceRecordBar();
 	initKeyHandler();
+
+	_hidden.changes(
+	) | rpl::start_with_next([=] {
+		updateWrappingVisibility();
+	}, _wrap->lifetime());
 
 	_botCommandStart->setClickedCallback([=] { setText({ "/" }); });
 
@@ -1315,6 +1347,7 @@ void ComposeControls::orderControls() {
 bool ComposeControls::showRecordButton() const {
 	return ::Media::Capture::instance()->available()
 		&& !_voiceRecordBar->isListenState()
+		&& !_voiceRecordBar->isRecordingByAnotherBar()
 		&& !HasSendText(_field)
 		//&& !readyToForward()
 		&& !isEditingMessage();
@@ -1407,14 +1440,25 @@ void ComposeControls::initField() {
 	Ui::Connect(_field, &Ui::InputField::resized, [=] { updateHeight(); });
 	//Ui::Connect(_field, &Ui::InputField::focused, [=] { fieldFocused(); });
 	Ui::Connect(_field, &Ui::InputField::changed, [=] { fieldChanged(); });
-	InitMessageField(_window, _field);
+	InitMessageField(_window, _field, [=](not_null<DocumentData*> emoji) {
+		if (_history && Data::AllowEmojiWithoutPremium(_history->peer)) {
+			return true;
+		}
+		if (_unavailableEmojiPasted) {
+			_unavailableEmojiPasted(emoji);
+		}
+		return false;
+	});
 	initAutocomplete();
+	const auto allow = [=](const auto &) {
+		return _history && Data::AllowEmojiWithoutPremium(_history->peer);
+	};
 	const auto suggestions = Ui::Emoji::SuggestionsController::Init(
 		_parent,
 		_field,
-		&_window->session());
+		&_window->session(),
+		{ .suggestCustomEmoji = true, .allowCustomWithoutPremium = allow });
 	_raiseEmojiSuggestions = [=] { suggestions->raise(); };
-	InitSpellchecker(_window, _field);
 
 	const auto rawTextEdit = _field->rawTextEdit().get();
 	rpl::merge(
@@ -1450,7 +1494,7 @@ void ComposeControls::initAutocomplete() {
 	const auto insertMention = [=](not_null<UserData*> user) {
 		if (user->username.isEmpty()) {
 			_field->insertTag(
-				user->firstName.isEmpty() ? user->name : user->firstName,
+				user->firstName.isEmpty() ? user->name() : user->firstName,
 				PrepareMentionTag(user));
 		} else {
 			_field->insertTag('@' + user->username);
@@ -1481,11 +1525,7 @@ void ComposeControls::initAutocomplete() {
 		//_saveDraftStart = crl::now();
 		//saveDraft();
 		//saveCloudDraft(); // won't be needed if SendInlineBotResult will clear the cloud draft
-		_fileChosen.fire(FileChosen{
-			.document = data.sticker,
-			.options = data.options,
-			.messageSendingFrom = base::take(data.messageSendingFrom),
-		});
+		_fileChosen.fire(std::move(data));
 	}, _autocomplete->lifetime());
 
 	_autocomplete->choosingProcesses(
@@ -1517,6 +1557,7 @@ void ComposeControls::initAutocomplete() {
 	}, _autocomplete->lifetime());
 
 	_window->session().data().stickers().updated(
+		Data::StickersType::Stickers
 	) | rpl::start_with_next([=] {
 		updateStickersByEmoji();
 	}, _autocomplete->lifetime());
@@ -1813,12 +1854,31 @@ void ComposeControls::initTabbedSelector() {
 	});
 
 	selector->emojiChosen(
-	) | rpl::start_with_next([=](EmojiPtr emoji) {
-		Ui::InsertEmojiAtCursor(_field->textCursor(), emoji);
+	) | rpl::start_with_next([=](ChatHelpers::EmojiChosen data) {
+		Ui::InsertEmojiAtCursor(_field->textCursor(), data.emoji);
 	}, wrap->lifetime());
 
-	selector->fileChosen(
-	) | rpl::start_to_stream(_fileChosen, wrap->lifetime());
+	rpl::merge(
+		selector->fileChosen(),
+		selector->customEmojiChosen(),
+		_window->stickerOrEmojiChosen()
+	) | rpl::start_with_next([=](ChatHelpers::FileChosen &&data) {
+		if (const auto info = data.document->sticker()
+			; info && info->setType == Data::StickersType::Emoji) {
+			if (data.document->isPremiumEmoji()
+				&& !session().premium()
+				&& (!_history
+					|| !Data::AllowEmojiWithoutPremium(_history->peer))) {
+				if (_unavailableEmojiPasted) {
+					_unavailableEmojiPasted(data.document);
+				}
+			} else {
+				Data::InsertCustomEmoji(_field, data.document);
+			}
+		} else {
+			_fileChosen.fire(std::move(data));
+		}
+	}, wrap->lifetime());
 
 	selector->photoChosen(
 	) | rpl::start_to_stream(_photoChosen, wrap->lifetime());
@@ -1878,42 +1938,6 @@ void ComposeControls::initSendAsButton() {
 			updateControlsGeometry(_wrap->size());
 		}
 	}, _wrap->lifetime());
-}
-
-void ComposeControls::inlineBotResolveDone(
-		const MTPcontacts_ResolvedPeer &result) {
-	Expects(result.type() == mtpc_contacts_resolvedPeer);
-
-	_inlineBotResolveRequestId = 0;
-	const auto &data = result.c_contacts_resolvedPeer();
-	const auto resolvedBot = [&]() -> UserData* {
-		if (const auto result = session().data().processUsers(data.vusers())) {
-			if (result->isBot()
-				&& !result->botInfo->inlinePlaceholder.isEmpty()) {
-				return result;
-			}
-		}
-		return nullptr;
-	}();
-	session().data().processChats(data.vchats());
-
-	const auto query = ParseInlineBotQuery(&session(), _field);
-	if (_inlineBotUsername == query.username) {
-		applyInlineBotQuery(
-			query.lookingUpBot ? resolvedBot : query.bot,
-			query.query);
-	} else {
-		clearInlineBot();
-	}
-}
-
-void ComposeControls::inlineBotResolveFail(
-		const MTP::Error &error,
-		const QString &username) {
-	_inlineBotResolveRequestId = 0;
-	if (username == _inlineBotUsername) {
-		clearInlineBot();
-	}
 }
 
 void ComposeControls::cancelInlineBot() {
@@ -1980,11 +2004,22 @@ void ComposeControls::initVoiceRecordBar() {
 	}, _wrap->lifetime());
 
 	_voiceRecordBar->setStartRecordingFilter([=] {
-		const auto error = _history
-			? Data::RestrictionError(
-				_history->peer,
-				ChatRestriction::SendMedia)
-			: std::nullopt;
+		const auto error = [&]() -> std::optional<QString> {
+			const auto peer = _history ? _history->peer.get() : nullptr;
+			if (!peer) {
+				if (const auto error = Data::RestrictionError(
+						peer,
+						ChatRestriction::SendMedia)) {
+					return error;
+				}
+				if (const auto error = Data::RestrictionError(
+						peer,
+						UserRestriction::SendVoiceMessages)) {
+					return error;
+				}
+			}
+			return std::nullopt;
+		}();
 		if (error) {
 			_window->show(Ui::MakeInformBox(*error));
 			return true;
@@ -2021,10 +2056,11 @@ void ComposeControls::initVoiceRecordBar() {
 }
 
 void ComposeControls::updateWrappingVisibility() {
+	const auto hidden = _hidden.current();
 	const auto restricted = _writeRestriction.current().has_value();
-	_writeRestricted->setVisible(restricted);
-	_wrap->setVisible(!restricted);
-	if (!restricted) {
+	_writeRestricted->setVisible(!hidden && restricted);
+	_wrap->setVisible(!hidden && !restricted);
+	if (!hidden && !restricted) {
 		_wrap->raise();
 	}
 }
@@ -2560,9 +2596,36 @@ void ComposeControls::updateInlineBotQuery() {
 			_inlineBotResolveRequestId = api.request(
 				MTPcontacts_ResolveUsername(MTP_string(username))
 			).done([=](const MTPcontacts_ResolvedPeer &result) {
-				inlineBotResolveDone(result);
-			}).fail([=](const MTP::Error &error) {
-				inlineBotResolveFail(error, username);
+				Expects(result.type() == mtpc_contacts_resolvedPeer);
+
+				const auto &data = result.c_contacts_resolvedPeer();
+				const auto resolvedBot = [&]() -> UserData* {
+					if (const auto user = session().data().processUsers(
+							data.vusers())) {
+						if (user->isBot()
+							&& !user->botInfo->inlinePlaceholder.isEmpty()) {
+							return user;
+						}
+					}
+					return nullptr;
+				}();
+				session().data().processChats(data.vchats());
+
+				_inlineBotResolveRequestId = 0;
+				const auto query = ParseInlineBotQuery(&session(), _field);
+				if (_inlineBotUsername == query.username) {
+					applyInlineBotQuery(
+						query.lookingUpBot ? resolvedBot : query.bot,
+						query.query);
+				} else {
+					clearInlineBot();
+				}
+
+			}).fail([=] {
+				_inlineBotResolveRequestId = 0;
+				if (username == _inlineBotUsername) {
+					clearInlineBot();
+				}
 			}).send();
 		} else {
 			applyInlineBotQuery(query.bot, query.query);

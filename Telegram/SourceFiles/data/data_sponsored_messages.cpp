@@ -146,25 +146,23 @@ void SponsoredMessages::append(
 		not_null<History*> history,
 		List &list,
 		const MTPSponsoredMessage &message) {
-	const auto &data = message.match([](
-			const auto &data) -> const MTPDsponsoredMessage& {
-		return data;
-	});
+	const auto &data = message.data();
 	const auto randomId = data.vrandom_id().v;
 	const auto hash = qs(data.vchat_invite_hash().value_or_empty());
-	const auto makeFrom = [](
+	const auto makeFrom = [&](
 			not_null<PeerData*> peer,
 			bool exactPost = false) {
 		const auto channel = peer->asChannel();
 		return SponsoredFrom{
 			.peer = peer,
-			.title = peer->name,
+			.title = peer->name(),
 			.isBroadcast = (channel && channel->isBroadcast()),
 			.isMegagroup = (channel && channel->isMegagroup()),
 			.isChannel = (channel != nullptr),
 			.isPublic = (channel && channel->isPublic()),
 			.isBot = (peer->isUser() && peer->asUser()->isBot()),
 			.isExactPost = exactPost,
+			.isRecommended = data.is_recommended(),
 			.userpic = { .location = peer->userpicLocation() },
 		};
 	};

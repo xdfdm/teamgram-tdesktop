@@ -16,7 +16,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/rp_widget.h"
 #include "ui/effects/animations.h"
 #include "ui/widgets/input_fields.h"
-#include "chat_helpers/tabbed_selector.h"
 
 class History;
 class FieldAutocomplete;
@@ -28,6 +27,8 @@ enum class Type;
 namespace ChatHelpers {
 class TabbedPanel;
 class TabbedSelector;
+struct FileChosen;
+struct PhotoChosen;
 } // namespace ChatHelpers
 
 namespace Data {
@@ -43,6 +44,7 @@ class ItemBase;
 class Widget;
 } // namespace Layout
 class Result;
+struct ResultSelected;
 } // namespace InlineBots
 
 namespace Ui {
@@ -78,9 +80,9 @@ class WebpageProcessor;
 
 class ComposeControls final {
 public:
-	using FileChosen = ChatHelpers::TabbedSelector::FileChosen;
-	using PhotoChosen = ChatHelpers::TabbedSelector::PhotoChosen;
-	using InlineChosen = ChatHelpers::TabbedSelector::InlineChosen;
+	using FileChosen = ChatHelpers::FileChosen;
+	using PhotoChosen = ChatHelpers::PhotoChosen;
+	using InlineChosen = InlineBots::ResultSelected;
 
 	using MessageToEdit = Controls::MessageToEdit;
 	using VoiceToSend = Controls::VoiceToSend;
@@ -97,6 +99,7 @@ public:
 	ComposeControls(
 		not_null<Ui::RpWidget*> parent,
 		not_null<Window::SessionController*> window,
+		Fn<void(not_null<DocumentData*>)> unavailableEmojiPasted,
 		Mode mode,
 		SendMenu::Type sendMenuType);
 	~ComposeControls();
@@ -168,6 +171,9 @@ public:
 	void clear();
 	void hidePanelsAnimated();
 	void clearListenState();
+
+	void hide();
+	void show();
 
 	[[nodiscard]] rpl::producer<bool> lockShowStarts() const;
 	[[nodiscard]] bool isLockPresent() const;
@@ -254,9 +260,6 @@ private:
 	// Request to show results in the emoji panel.
 	void applyInlineBotQuery(UserData *bot, const QString &query);
 
-	void inlineBotResolveDone(const MTPcontacts_ResolvedPeer &result);
-	void inlineBotResolveFail(const MTP::Error &error, const QString &username);
-
 	[[nodiscard]] Data::DraftKey draftKey(
 		DraftType type = DraftType::Normal) const;
 	[[nodiscard]] Data::DraftKey draftKeyCurrent() const;
@@ -285,6 +288,7 @@ private:
 	rpl::variable<int> _slowmodeSecondsLeft;
 	rpl::variable<bool> _sendDisabledBySlowmode;
 	rpl::variable<std::optional<QString>> _writeRestriction;
+	rpl::variable<bool> _hidden;
 	Mode _mode = Mode::Normal;
 
 	const std::unique_ptr<Ui::RpWidget> _wrap;
@@ -308,6 +312,7 @@ private:
 	const std::unique_ptr<Controls::VoiceRecordBar> _voiceRecordBar;
 
 	const SendMenu::Type _sendMenuType;
+	const Fn<void(not_null<DocumentData*>)> _unavailableEmojiPasted;
 
 	rpl::event_stream<Api::SendOptions> _sendCustomRequests;
 	rpl::event_stream<> _cancelRequests;

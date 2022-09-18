@@ -194,7 +194,8 @@ bool Widget::floatPlayerIsVisible(not_null<HistoryItem*> item) {
 void Widget::floatPlayerDoubleClickEvent(not_null<const HistoryItem*> item) {
 	getData()->controller->invokeForSessionController(
 		&item->history()->peer->session().account(),
-		[=](not_null<Window::SessionController*> controller) {
+		item->history()->peer,
+		[&](not_null<Window::SessionController*> controller) {
 			controller->showPeerHistoryAtItem(item);
 		});
 }
@@ -459,13 +460,8 @@ void Widget::showTerms() {
 				Ui::Text::WithEntities),
 			st::introTermsLabel);
 		_terms.create(this, std::move(entity));
-		_terms->entity()->setClickHandlerFilter([=](
-				const ClickHandlerPtr &handler,
-				Qt::MouseButton button) {
-			if (button == Qt::LeftButton) {
-				showTerms(nullptr);
-			}
-			return false;
+		_terms->entity()->overrideLinkClickHandler([=] {
+			showTerms(nullptr);
 		});
 		updateControlsGeometry();
 		_terms->hide(anim::type::instant);
@@ -491,7 +487,9 @@ void Widget::resetAccount() {
 			return;
 		}
 		_resetRequest = _api->request(MTPaccount_DeleteAccount(
-			MTP_string("Forgot password")
+			MTP_flags(0),
+			MTP_string("Forgot password"),
+			MTPInputCheckPasswordSRP()
 		)).done([=] {
 			_resetRequest = 0;
 

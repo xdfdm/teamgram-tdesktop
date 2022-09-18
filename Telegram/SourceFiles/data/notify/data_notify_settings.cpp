@@ -76,7 +76,7 @@ void NotifySettings::apply(
 
 void NotifySettings::update(
 		not_null<PeerData*> peer,
-		std::optional<int> muteForSeconds,
+		Data::MuteValue muteForSeconds,
 		std::optional<bool> silentPosts,
 		std::optional<NotifySound> sound) {
 	if (peer->notifyChange(muteForSeconds, silentPosts, sound)) {
@@ -130,7 +130,7 @@ const PeerNotifySettings &NotifySettings::defaultSettings(
 
 void NotifySettings::defaultUpdate(
 		DefaultNotify type,
-		std::optional<int> muteForSeconds,
+		Data::MuteValue muteForSeconds,
 		std::optional<bool> silentPosts,
 		std::optional<NotifySound> sound) {
 	auto &settings = defaultValue(type).settings;
@@ -161,25 +161,7 @@ void NotifySettings::updateLocal(not_null<PeerData*> peer) {
 	} else {
 		_mutedPeers.erase(peer);
 	}
-
-	if (const auto sound = peer->notifySound(); sound && sound->id) {
-		if (const auto doc = _owner->document(sound->id); !doc->isNull()) {
-			cacheSound(doc);
-		} else {
-			_ringtones.pendingIds.push_back(sound->id);
-			if (!_ringtones.pendingLifetime) {
-				// Not requested yet.
-				_owner->session().api().ringtones().listUpdates(
-				) | rpl::start_with_next([=] {
-					for (const auto id : base::take(_ringtones.pendingIds)) {
-						cacheSound(id);
-					}
-					_ringtones.pendingLifetime.destroy();
-				}, _ringtones.pendingLifetime);
-				_owner->session().api().ringtones().requestList();
-			}
-		}
-	}
+	cacheSound(peer->notifySound());
 }
 
 void NotifySettings::cacheSound(DocumentId id) {
@@ -194,6 +176,28 @@ void NotifySettings::cacheSound(not_null<DocumentData*> document) {
 	_ringtones.views.emplace(document->id, view);
 	document->forceToCache(true);
 	document->save(Data::FileOriginRingtones(), QString());
+}
+
+void NotifySettings::cacheSound(const std::optional<NotifySound> &sound) {
+	if (!sound || !sound->id) {
+		return;
+	} else if (const auto doc = _owner->document(sound->id); !doc->isNull()) {
+		cacheSound(doc);
+		return;
+	}
+	_ringtones.pendingIds.push_back(sound->id);
+	if (_ringtones.pendingLifetime) {
+		return;
+	}
+	// Not requested yet.
+	_owner->session().api().ringtones().listUpdates(
+	) | rpl::start_with_next([=] {
+		for (const auto id : base::take(_ringtones.pendingIds)) {
+			cacheSound(id);
+		}
+		_ringtones.pendingLifetime.destroy();
+	}, _ringtones.pendingLifetime);
+	_owner->session().api().ringtones().requestList();
 }
 
 void NotifySettings::updateLocal(DefaultNotify type) {
@@ -220,6 +224,7 @@ void NotifySettings::updateLocal(DefaultNotify type) {
 		_owner->enumerateBroadcasts(callback);
 		break;
 	}
+	cacheSound(defaultValue(type).settings.sound());
 }
 
 std::shared_ptr<DocumentMedia> NotifySettings::lookupRingtone(

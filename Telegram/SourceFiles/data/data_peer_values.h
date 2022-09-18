@@ -104,12 +104,19 @@ inline auto PeerFullFlagValue(
 [[nodiscard]] rpl::producer<bool> CanWriteValue(ChatData *chat);
 [[nodiscard]] rpl::producer<bool> CanWriteValue(ChannelData *channel);
 [[nodiscard]] rpl::producer<bool> CanWriteValue(not_null<PeerData*> peer);
-[[nodiscard]] rpl::producer<bool> CanPinMessagesValue(not_null<PeerData*> peer);
-[[nodiscard]] rpl::producer<bool> CanManageGroupCallValue(not_null<PeerData*> peer);
+[[nodiscard]] rpl::producer<bool> CanPinMessagesValue(
+	not_null<PeerData*> peer);
+[[nodiscard]] rpl::producer<bool> CanManageGroupCallValue(
+	not_null<PeerData*> peer);
+[[nodiscard]] rpl::producer<bool> PeerPremiumValue(not_null<PeerData*> peer);
+[[nodiscard]] rpl::producer<bool> AmPremiumValue(
+	not_null<Main::Session*> session);
 
 [[nodiscard]] TimeId SortByOnlineValue(not_null<UserData*> user, TimeId now);
 [[nodiscard]] crl::time OnlineChangeTimeout(TimeId online, TimeId now);
-[[nodiscard]] crl::time OnlineChangeTimeout(not_null<UserData*> user, TimeId now);
+[[nodiscard]] crl::time OnlineChangeTimeout(
+	not_null<UserData*> user,
+	TimeId now);
 [[nodiscard]] QString OnlineText(TimeId online, TimeId now);
 [[nodiscard]] QString OnlineText(not_null<UserData*> user, TimeId now);
 [[nodiscard]] QString OnlineTextFull(not_null<UserData*> user, TimeId now);
@@ -126,12 +133,13 @@ inline auto PeerFullFlagValue(
 	int size,
 	ImageRoundRadius radius);
 
-[[nodiscard]] std::optional<base::flat_set<QString>> PeerAllowedReactions(
+[[nodiscard]] const AllowedReactions &PeerAllowedReactions(
 	not_null<PeerData*> peer);
-[[nodiscard]] auto PeerAllowedReactionsValue(not_null<PeerData*> peer)
--> rpl::producer<std::optional<base::flat_set<QString>>>;
+[[nodiscard]] rpl::producer<AllowedReactions> PeerAllowedReactionsValue(
+	not_null<PeerData*> peer);
 
+[[nodiscard]] int UniqueReactionsLimit(not_null<PeerData*> peer);
 [[nodiscard]] rpl::producer<int> UniqueReactionsLimitValue(
-	not_null<Main::Session*> session);
+	not_null<PeerData*> peer);
 
 } // namespace Data

@@ -18,6 +18,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_histories.h"
 #include "data/data_group_call.h"
 #include "data/data_message_reactions.h"
+#include "data/data_peer_bot_command.h"
 #include "main/main_session.h"
 #include "main/session/send_as_peers.h"
 #include "base/unixtime.h"
@@ -49,14 +50,9 @@ void MegagroupInfo::setLocation(const ChannelLocation &location) {
 	_location = location;
 }
 
-bool MegagroupInfo::updateBotCommands(const MTPVector<MTPBotInfo> &data) {
-	return Data::UpdateBotCommands(_botCommands, data);
-}
-
-bool MegagroupInfo::updateBotCommands(
-		UserId botId,
-		const MTPVector<MTPBotCommand> &data) {
-	return Data::UpdateBotCommands(_botCommands, botId, data);
+Data::ChatBotCommands::Changed MegagroupInfo::setBotCommands(
+		const std::vector<Data::BotCommands> &list) {
+	return _botCommands.update(list);
 }
 
 ChannelData::ChannelData(not_null<Data::Session*> owner, PeerId id)
@@ -92,20 +88,29 @@ ChannelData::ChannelData(not_null<Data::Session*> owner, PeerId id)
 
 void ChannelData::setPhoto(const MTPChatPhoto &photo) {
 	photo.match([&](const MTPDchatPhoto & data) {
-		updateUserpic(data.vphoto_id().v, data.vdc_id().v);
+		updateUserpic(
+			data.vphoto_id().v,
+			data.vdc_id().v,
+			data.is_has_video());
 	}, [&](const MTPDchatPhotoEmpty &) {
 		clearUserpic();
 	});
 }
 
-void ChannelData::setName(const QString &newName, const QString &newUsername) {
-	updateNameDelayed(newName.isEmpty() ? name : newName, QString(), newUsername);
+void ChannelData::setName(
+		const QString &newName,
+		const QString &newUsername) {
+	updateNameDelayed(newName.isEmpty() ? name() : newName, {}, newUsername);
 }
 
 void ChannelData::setAccessHash(uint64 accessHash) {
 	access = accessHash;
-	input = MTP_inputPeerChannel(MTP_long(peerToChannel(id).bare), MTP_long(accessHash));
-	inputChannel = MTP_inputChannel(MTP_long(peerToChannel(id).bare), MTP_long(accessHash));
+	input = MTP_inputPeerChannel(
+		MTP_long(peerToChannel(id).bare),
+		MTP_long(accessHash));
+	inputChannel = MTP_inputChannel(
+		MTP_long(peerToChannel(id).bare),
+		MTP_long(accessHash));
 }
 
 void ChannelData::setInviteLink(const QString &newInviteLink) {
@@ -378,7 +383,7 @@ void ChannelData::markForbidden() {
 			: MTPDchannelForbidden::Flag::f_broadcast),
 		MTP_long(peerToChannel(id).bare),
 		MTP_long(access),
-		MTP_string(name),
+		MTP_string(name()),
 		MTPint()));
 }
 
@@ -467,7 +472,8 @@ bool ChannelData::canPublish() const {
 
 bool ChannelData::canWrite() const {
 	// Duplicated in Data::CanWriteValue().
-	const auto allowed = amIn() || (flags() & Flag::HasLink);
+	const auto allowed = amIn()
+		|| ((flags() & Flag::HasLink) && !(flags() & Flag::JoinToWrite));
 	return allowed && (canPublish()
 			|| (!isBroadcast()
 				&& !amRestricted(Restriction::SendMessages)));
@@ -763,20 +769,23 @@ PeerId ChannelData::groupCallDefaultJoinAs() const {
 	return _callDefaultJoinAs;
 }
 
-void ChannelData::setAllowedReactions(base::flat_set<QString> list) {
-	if (_allowedReactions != list) {
-		const auto toggled = (_allowedReactions.empty() != list.empty());
-		_allowedReactions = std::move(list);
-		if (toggled) {
-			owner().reactions().updateAllInHistory(
-				this,
-				!_allowedReactions.empty());
+void ChannelData::setAllowedReactions(Data::AllowedReactions value) {
+	if (_allowedReactions != value) {
+		const auto enabled = [](const Data::AllowedReactions &allowed) {
+			return (allowed.type != Data::AllowedReactionsType::Some)
+				|| !allowed.some.empty();
+		};
+		const auto was = enabled(_allowedReactions);
+		_allowedReactions = std::move(value);
+		const auto now = enabled(_allowedReactions);
+		if (was != now) {
+			owner().reactions().updateAllInHistory(this, now);
 		}
 		session().changes().peerUpdated(this, UpdateFlag::Reactions);
 	}
 }
 
-const base::flat_set<QString> &ChannelData::allowedReactions() const {
+const Data::AllowedReactions &ChannelData::allowedReactions() const {
 	return _allowedReactions;
 }
 
@@ -903,7 +912,13 @@ void ApplyChannelUpdate(
 		SetTopPinnedMessageId(channel, pinned->v);
 	}
 	if (channel->isMegagroup()) {
-		if (channel->mgInfo->updateBotCommands(update.vbot_info())) {
+		auto commands = ranges::views::all(
+			update.vbot_info().v
+		) | ranges::views::transform(
+			Data::BotCommandsFromTL
+		) | ranges::to_vector;
+
+		if (channel->mgInfo->setBotCommands(std::move(commands))) {
 			channel->owner().botCommandsChanged(channel);
 		}
 		const auto stickerSet = update.vstickerset();
@@ -923,8 +938,11 @@ void ApplyChannelUpdate(
 		}
 	}
 	channel->setThemeEmoji(qs(update.vtheme_emoticon().value_or_empty()));
-	channel->setAllowedReactions(
-		Data::Reactions::ParseAllowed(update.vavailable_reactions()));
+	if (const auto allowed = update.vavailable_reactions()) {
+		channel->setAllowedReactions(Data::Parse(*allowed));
+	} else {
+		channel->setAllowedReactions({});
+	}
 	channel->fullUpdated();
 	channel->setPendingRequestsCount(
 		update.vrequests_pending().value_or_empty(),

@@ -205,6 +205,7 @@ rpl::producer<bool> CanWriteValue(ChannelData *channel) {
 	using Flag = ChannelDataFlag;
 	const auto mask = 0
 		| Flag::Left
+		| Flag::JoinToWrite
 		| Flag::HasLink
 		| Flag::Forbidden
 		| Flag::Creator
@@ -227,7 +228,7 @@ rpl::producer<bool> CanWriteValue(ChannelData *channel) {
 				bool defaultSendMessagesRestriction) {
 			const auto notAmInFlags = Flag::Left | Flag::Forbidden;
 			const auto allowed = !(flags & notAmInFlags)
-				|| (flags & Flag::HasLink);
+				|| ((flags & Flag::HasLink) && !(flags & Flag::JoinToWrite));
 			return allowed && (postMessagesRight
 					|| (flags & Flag::Creator)
 					|| (!(flags & Flag::Broadcast)
@@ -320,6 +321,23 @@ rpl::producer<bool> CanManageGroupCallValue(not_null<PeerData*> peer) {
 			: AdminRightValue(channel, flag);
 	}
 	return rpl::single(false);
+}
+
+rpl::producer<bool> PeerPremiumValue(not_null<PeerData*> peer) {
+	const auto user = peer->asUser();
+	if (!user) {
+		return rpl::single(false);
+	}
+	return user->flagsValue(
+	) | rpl::filter([=](UserData::Flags::Change change) {
+		return (change.diff & UserDataFlag::Premium);
+	}) | rpl::map([=] {
+		return user->isPremium();
+	});
+}
+
+rpl::producer<bool> AmPremiumValue(not_null<Main::Session*> session) {
+	return PeerPremiumValue(session->user());
 }
 
 TimeId SortByOnlineValue(not_null<UserData*> user, TimeId now) {
@@ -495,20 +513,21 @@ rpl::producer<QImage> PeerUserpicImageValue(
 	};
 }
 
-std::optional<base::flat_set<QString>> PeerAllowedReactions(
-		not_null<PeerData*> peer) {
+const AllowedReactions &PeerAllowedReactions(not_null<PeerData*> peer) {
 	if (const auto chat = peer->asChat()) {
 		return chat->allowedReactions();
 	} else if (const auto channel = peer->asChannel()) {
 		return channel->allowedReactions();
 	} else {
-		return std::nullopt;
+		static const auto result = AllowedReactions{
+			.type = AllowedReactionsType::All,
+		};
+		return result;
 	}
 }
 
- auto PeerAllowedReactionsValue(
-	not_null<PeerData*> peer)
--> rpl::producer<std::optional<base::flat_set<QString>>> {
+ rpl::producer<AllowedReactions> PeerAllowedReactionsValue(
+		not_null<PeerData*> peer) {
 	return peer->session().changes().peerFlagsValue(
 		peer,
 		Data::PeerUpdate::Flag::Reactions
@@ -517,13 +536,20 @@ std::optional<base::flat_set<QString>> PeerAllowedReactions(
 	});
 }
 
+int UniqueReactionsLimit(not_null<Main::AppConfig*> config) {
+	return config->get<int>("reactions_uniq_max", 11);
+}
+
+int UniqueReactionsLimit(not_null<PeerData*> peer) {
+	return UniqueReactionsLimit(&peer->session().account().appConfig());
+}
+
 rpl::producer<int> UniqueReactionsLimitValue(
-		not_null<Main::Session*> session) {
-	const auto config = &session->account().appConfig();
+		not_null<PeerData*> peer) {
+	const auto config = &peer->session().account().appConfig();
 	return config->value(
 	) | rpl::map([=] {
-		return int(base::SafeRound(
-			config->get<double>("reactions_uniq_max", 11)));
+		return UniqueReactionsLimit(config);
 	}) | rpl::distinct_until_changed();
 }
 

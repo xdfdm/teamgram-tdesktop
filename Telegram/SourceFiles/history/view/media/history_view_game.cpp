@@ -35,7 +35,8 @@ Game::Game(
 , _description(st::msgMinWidth - st::webPageLeft) {
 	if (!consumed.text.isEmpty()) {
 		const auto context = Core::MarkedTextContext{
-			.session = &history()->session()
+			.session = &history()->session(),
+			.customEmojiRepaint = [=] { _parent->customEmojiRepaint(); },
 		};
 		_description.setMarkedText(
 			st::webPageDescriptionStyle,
@@ -47,7 +48,7 @@ Game::Game(
 }
 
 QSize Game::countOptimalSize() {
-	auto lineHeight = unitedLineHeight();
+	auto lineHeight = UnitedLineHeight();
 
 	const auto item = _parent->data();
 	if (!_openl && item->isRegular()) {
@@ -148,7 +149,7 @@ QSize Game::countCurrentSize(int newWidth) {
 
 	// enable any count of lines in game description / message
 	auto linesMax = 4096;
-	auto lineHeight = unitedLineHeight();
+	auto lineHeight = UnitedLineHeight();
 	auto newHeight = 0;
 	if (_title.isEmpty()) {
 		_titleLines = 0;
@@ -224,7 +225,7 @@ void Game::draw(Painter &p, const PaintContext &context) const {
 	QRect bar(style::rtlrect(st::msgPadding.left(), tshift, st::webPageBar, height() - tshift - bshift, width()));
 	p.fillRect(bar, barfg);
 
-	auto lineHeight = unitedLineHeight();
+	auto lineHeight = UnitedLineHeight();
 	if (_titleLines) {
 		p.setPen(semibold);
 		p.setTextPalette(stm->semiboldPalette);
@@ -244,6 +245,7 @@ void Game::draw(Painter &p, const PaintContext &context) const {
 		if (_description.hasSkipBlock()) {
 			endskip = _parent->skipBlockWidth();
 		}
+		_parent->prepareCustomEmojiPaint(p, context, _description);
 		_description.drawLeftElided(p, padding.left(), tshift, paintw, width(), _descriptionLines, style::al_left, 0, -1, endskip, false, toDescriptionSelection(context.selection));
 		tshift += _descriptionLines * lineHeight;
 	}
@@ -299,7 +301,7 @@ TextState Game::textState(QPoint point, StateRequest request) const {
 
 	auto inThumb = false;
 	auto symbolAdd = 0;
-	auto lineHeight = unitedLineHeight();
+	auto lineHeight = UnitedLineHeight();
 	if (_titleLines) {
 		if (point.y() >= tshift && point.y() < tshift + _titleLines * lineHeight) {
 			Ui::Text::StateRequestElided titleRequest = request.forText();
@@ -428,7 +430,8 @@ void Game::parentTextUpdated() {
 		const auto consumed = media->consumedMessageText();
 		if (!consumed.text.isEmpty()) {
 			const auto context = Core::MarkedTextContext{
-				.session = &history()->session()
+				.session = &history()->session(),
+				.customEmojiRepaint = [=] { _parent->customEmojiRepaint(); },
 			};
 			_description.setMarkedText(
 				st::webPageDescriptionStyle,
@@ -440,6 +443,17 @@ void Game::parentTextUpdated() {
 		}
 		history()->owner().requestViewResize(_parent);
 	}
+}
+
+bool Game::hasHeavyPart() const {
+	return _attach ? _attach->hasHeavyPart() : false;
+}
+
+void Game::unloadHeavyPart() {
+	if (_attach) {
+		_attach->unloadHeavyPart();
+	}
+	_description.unloadCustomEmoji();
 }
 
 Game::~Game() {

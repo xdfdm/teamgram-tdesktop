@@ -88,14 +88,14 @@ void PrepareDetailsInParallel(PreparedList &result, int previewWidth) {
 } // namespace
 
 bool ValidatePhotoEditorMediaDragData(not_null<const QMimeData*> data) {
-	if (data->urls().size() > 1) {
+	if (base::GetMimeUrls(data).size() > 1) {
 		return false;
 	} else if (data->hasImage()) {
 		return true;
 	}
 
 	if (data->hasUrls()) {
-		const auto url = data->urls().front();
+		const auto url = base::GetMimeUrls(data).front();
 		if (url.isLocalFile()) {
 			using namespace Core;
 			const auto info = QFileInfo(Platform::File::UrlToLocal(url));
@@ -111,14 +111,14 @@ bool ValidatePhotoEditorMediaDragData(not_null<const QMimeData*> data) {
 bool ValidateEditMediaDragData(
 		not_null<const QMimeData*> data,
 		Ui::AlbumType albumType) {
-	if (data->urls().size() > 1) {
+	if (base::GetMimeUrls(data).size() > 1) {
 		return false;
 	} else if (data->hasImage()) {
 		return (albumType != Ui::AlbumType::Music);
 	}
 
 	if (albumType == Ui::AlbumType::PhotoVideo && data->hasUrls()) {
-		const auto url = data->urls().front();
+		const auto url = base::GetMimeUrls(data).front();
 		if (url.isLocalFile()) {
 			using namespace Core;
 			const auto info = QFileInfo(Platform::File::UrlToLocal(url));
@@ -143,7 +143,7 @@ MimeDataState ComputeMimeDataState(const QMimeData *data) {
 		return MimeDataState::None;
 	}
 
-	const auto &urls = data->urls();
+	const auto &urls = base::GetMimeUrls(data);
 	if (urls.isEmpty()) {
 		return MimeDataState::None;
 	}
@@ -163,8 +163,10 @@ MimeDataState ComputeMimeDataState(const QMimeData *data) {
 		}
 
 		const auto filesize = info.size();
-		if (filesize > kFileSizeLimit) {
+		if (filesize > kFileSizePremiumLimit) {
 			return MimeDataState::None;
+		//} else if (filesize > kFileSizeLimit) {
+		//	return MimeDataState::PremiumFile;
 		} else if (allAreSmallImages) {
 			if (filesize > Images::kReadBytesLimit) {
 				allAreSmallImages = false;
@@ -178,7 +180,10 @@ MimeDataState ComputeMimeDataState(const QMimeData *data) {
 		: MimeDataState::Files;
 }
 
-PreparedList PrepareMediaList(const QList<QUrl> &files, int previewWidth) {
+PreparedList PrepareMediaList(
+		const QList<QUrl> &files,
+		int previewWidth,
+		bool premium) {
 	auto locals = QStringList();
 	locals.reserve(files.size());
 	for (const auto &url : files) {
@@ -190,10 +195,13 @@ PreparedList PrepareMediaList(const QList<QUrl> &files, int previewWidth) {
 		}
 		locals.push_back(Platform::File::UrlToLocal(url));
 	}
-	return PrepareMediaList(locals, previewWidth);
+	return PrepareMediaList(locals, previewWidth, premium);
 }
 
-PreparedList PrepareMediaList(const QStringList &files, int previewWidth) {
+PreparedList PrepareMediaList(
+		const QStringList &files,
+		int previewWidth,
+		bool premium) {
 	auto result = PreparedList();
 	result.files.reserve(files.size());
 	for (const auto &file : files) {
@@ -209,11 +217,14 @@ PreparedList PrepareMediaList(const QStringList &files, int previewWidth) {
 				PreparedList::Error::EmptyFile,
 				file
 			};
-		} else if (filesize > kFileSizeLimit) {
-			return {
+		} else if (filesize > kFileSizePremiumLimit
+			|| (filesize > kFileSizeLimit && !premium)) {
+			auto errorResult = PreparedList(
 				PreparedList::Error::TooLargeFile,
-				file
-			};
+				QString());
+			errorResult.files.emplace_back(file);
+			errorResult.files.back().size = filesize;
+			return errorResult;
 		}
 		if (result.files.size() < Ui::MaxAlbumItems()) {
 			result.files.emplace_back(file);
@@ -253,13 +264,14 @@ std::optional<PreparedList> PreparedFileFromFilesDialog(
 		FileDialog::OpenResult &&result,
 		Fn<bool(const Ui::PreparedList&)> checkResult,
 		Fn<void(tr::phrase<>)> errorCallback,
-		int previewWidth) {
+		int previewWidth,
+		bool premium) {
 	if (result.paths.isEmpty() && result.remoteContent.isEmpty()) {
 		return std::nullopt;
 	}
 
 	auto list = result.remoteContent.isEmpty()
-		? PrepareMediaList(result.paths, previewWidth)
+		? PrepareMediaList(result.paths, previewWidth, premium)
 		: PrepareMediaFromImage(
 			QImage(),
 			std::move(result.remoteContent),

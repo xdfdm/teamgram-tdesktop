@@ -47,6 +47,9 @@ maxWallPaperWidth: 160px;
 maxWallPaperHeight: 240px;
 historyThemeSize: size(272px, 176px);
 
+extendedPreviewButtonPadding: margins(20px, 10px, 20px, 10px);
+extendedPreviewButtonMargin: 20px;
+
 historyMinimalWidth: 380px;
 
 reactionMenu: PopupMenu(defaultPopupMenu) {
@@ -74,6 +77,22 @@ historyScroll: ScrollArea(defaultScrollArea) {
 historyResizeWidth: 6px;
 
 historyPaddingBottom: 8px;
+
+historyPremiumToast: Toast(defaultToast) {
+	minWidth: msgMinWidth;
+	maxWidth: 380px;
+	padding: margins(19px, 13px, 19px, 12px);
+}
+historyPremiumViewSet: RoundButton(defaultActiveButton) {
+	width: -24px;
+	height: 44px;
+	textTop: 13px;
+	textFg: mediaviewTextLinkFg;
+	textFgOver: mediaviewTextLinkFg;
+	textBg: transparent;
+	textBgOver: transparent;
+	ripple: emptyRippleAnimation;
+}
 
 historyToDownPosition: point(12px, 10px);
 historyToDownAbove: icon {{ "history_down_arrow", historyToDownFg }};
@@ -288,6 +307,10 @@ historyContactStatusBlock: FlatButton(historyContactStatusButton) {
 }
 historyContactStatusLabel: FlatLabel(defaultFlatLabel) {
 	minWidth: 240px;
+}
+historyEmojiStatusInfoLabel: FlatLabel(historyContactStatusLabel) {
+	align: align(top);
+	textFg: windowSubTextFg;
 }
 historyContactStatusMinSkip: 16px;
 
@@ -652,8 +675,20 @@ msgVideoSize: size(320px, 240px);
 
 msgWaveformBar: 2px;
 msgWaveformSkip: 1px;
-msgWaveformMin: 2px;
-msgWaveformMax: 20px;
+msgWaveformMin: 3px;
+msgWaveformMax: 17px;
+
+historyTranscribeSkip: 10px;
+historyTranscribeSize: size(28px, 22px);
+historyTranscribeRadius: 4px;
+historyTranscribeInIcon: icon {{ "chat/voice_to_text", msgFileInBg }};
+historyTranscribeInIconSelected: icon {{ "chat/voice_to_text", msgFileInBgSelected }};
+historyTranscribeOutIcon: icon {{ "chat/voice_to_text", msgFileOutBg }};
+historyTranscribeOutIconSelected: icon {{ "chat/voice_to_text", msgFileOutBgSelected }};
+historyTranscribeInHide: icon {{ "chat/voice_to_text_collapse", msgFileInBg }};
+historyTranscribeInHideSelected: icon {{ "chat/voice_to_text_collapse", msgFileInBgSelected }};
+historyTranscribeOutHide: icon {{ "chat/voice_to_text_collapse", msgFileOutBg }};
+historyTranscribeOutHideSelected: icon {{ "chat/voice_to_text_collapse", msgFileOutBgSelected }};
 
 historyVideoMessageMute: icon {{ "volume_mute", historyFileThumbIconFg }};
 historyVideoMessageMuteSelected: icon {{ "volume_mute", historyFileThumbIconFgSelected }};
@@ -908,10 +943,13 @@ ttlDividerLabelPadding: margins(22px, 10px, 22px, 19px);
 ttlItemPadding: margins(0px, 4px, 0px, 4px);
 ttlItemTimerFont: font(12px);
 
+expandedMenuSeparator: MenuSeparator(defaultMenuSeparator) {
+	padding: margins(0px, 4px, 0px, 4px);
+	width: 6px;
+}
 popupMenuExpandedSeparator: PopupMenu(popupMenuWithIcons) {
 	menu: Menu(menuWithIcons) {
-		separatorPadding: margins(0px, 4px, 0px, 4px);
-		separatorWidth: 6px;
+		separator: expandedMenuSeparator;
 	}
 }
 
@@ -996,14 +1034,14 @@ sendAsButton: SendAsButton {
 }
 
 reactionInlinePadding: margins(5px, 2px, 7px, 2px);
-reactionInlineSize: 16px;
-reactionInlineImage: 28px;
+reactionInlineSize: 18px;
+reactionInlineImage: 32px;
 reactionInlineSkip: 3px;
 reactionInlineBetween: 4px;
 reactionInlineInBubbleLeft: -3px;
 reactionInlineUserpicsPadding: margins(1px, 1px, 1px, 1px);
 reactionInlineUserpics: GroupCallUserpics {
-	size: 18px;
+	size: 20px;
 	shift: 7px;
 	stroke: 1px;
 	align: align(left);
@@ -1032,6 +1070,19 @@ reactionMainAppearShift: 20px;
 reactionCollapseFadeThreshold: 40px;
 reactionFlyUp: 50px;
 
+reactionPremiumLocked: icon{
+	{ "chat/reactions_premium_bg", historyPeerArchiveUserpicBg },
+	{ "chat/reactions_premium_star", historyPeerUserpicFg },
+};
+reactionExpandPanel: icon{
+	{ "chat/reactions_round_big", windowSubTextFg },
+	{ "chat/reactions_expand_panel", windowBg },
+};
+reactionsExpandDropdown: icon{
+	{ "chat/reactions_round_small", windowSubTextFg },
+	{ "chat/reactions_expand_panel", windowBg },
+};
+
 searchInChatMultiSelectItem: MultiSelectItem(defaultMultiSelectItem) {
 	maxWidth: 200px;
 }
@@ -1044,3 +1095,23 @@ searchInChatPeerListItem: PeerListItem(defaultPeerListItem) {
 searchInChatPeerList: PeerList(defaultPeerList) {
 	item: searchInChatPeerListItem;
 }
+
+msgServiceGiftBoxSize: size(206px, 231px); // Plus msgServiceGiftBoxTopSkip.
+msgServiceGiftBoxRadius: 12px;
+msgServiceGiftBoxTopSkip: 4px;
+msgServiceGiftBoxButtonHeight: 32px;
+msgServiceGiftBoxButtonMargins: margins(2px, 0px, 2px, 0px);
+msgServiceGiftBoxButtonPadding: margins(0px, 17px, 0px, 17px);
+msgServiceGiftBoxTitlePadding: margins(0px, 126px, 0px, 2px);
+msgServiceGiftBoxStickerTop: -19px;
+msgServiceGiftBoxStickerSize: size(140px, 140px);
+
+historyHasCustomEmoji: FlatLabel(defaultFlatLabel) {
+	style: TextStyle(defaultTextStyle) {
+		font: font(11px);
+		linkFont: font(11px underline);
+		linkFontOver: font(11px underline);
+	}
+	minWidth: 80px;
+}
+historyHasCustomEmojiPosition: point(12px, 4px);

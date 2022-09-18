@@ -5,7 +5,6 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**.md'
-      - '!docs/building-win.md'
       - 'changelog.txt'
       - 'LEGAL'
       - 'LICENSE'
@@ -24,7 +23,6 @@ on:
     paths-ignore:
       - 'docs/**'
       - '**.md'
-      - '!docs/building-win.md'
       - 'changelog.txt'
       - 'LEGAL'
       - 'LICENSE'
@@ -81,23 +79,12 @@ jobs:
           submodules: recursive
           path: ${{ env.TBUILD }}\${{ env.REPO_NAME }}
 
-      - name: Choco installs.
-        run: |
-          choco install --no-progress -y nasm strawberryperl yasm jom ninja
-          py -m pip install pywin32
-
-      - name: Install msys64.
-        run: |
-          mkdir %TBUILD%\ThirdParty
-          xcopy /E /I C:\msys64 %TBUILD%\ThirdParty\msys64
+      - name: Python installs.
+        run: py -m pip install pywin32
 
       - name: Set up environment paths.
         shell: bash
         run: |
-          echo "C:\\Strawberry\\perl\\bin\\" >> $GITHUB_PATH
-          echo "C:\\Program Files\\NASM\\" >> $GITHUB_PATH
-          echo "C:\\ProgramData\\chocolatey\\lib\\ninja\\tools\\" >> $GITHUB_PATH
-
           echo "CACHE_KEY=$(sha256sum $TBUILD/$REPO_NAME/$PREPARE_PATH | awk '{ print $1 }')" >> $GITHUB_ENV
 
           echo "Configurate git for cherry-picks."
@@ -130,9 +117,9 @@ jobs:
           if [ -n "${{ matrix.defines }}" ]; then
             DEFINE="-D ${{ matrix.defines }}=ON"
             echo Define from matrix: $DEFINE
-            echo "ARTIFACT_NAME=Telegram_${{ matrix.defines }}" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=Telegram_${{ matrix.arch }}_${{ matrix.defines }}" >> $GITHUB_ENV
           else
-            echo "ARTIFACT_NAME=Telegram" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=Telegram_${{ matrix.arch }}" >> $GITHUB_ENV
           fi
           echo "TDESKTOP_BUILD_DEFINE=$DEFINE" >> $GITHUB_ENV
 
@@ -151,7 +138,6 @@ jobs:
           call configure.bat ^
           ${{ matrix.arch }} ^
           -D TDESKTOP_API_TEST=ON ^
-          -D DESKTOP_APP_USE_PACKAGED=OFF ^
           -D DESKTOP_APP_DISABLE_CRASH_REPORTS=OFF ^
           -D DESKTOP_APP_NO_PDB=ON ^
           %TDESKTOP_BUILD_DEFINE% ^

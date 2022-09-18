@@ -37,10 +37,10 @@ using Options = base::flags<Option>;
 namespace Data {
 
 struct UploadState {
-	UploadState(int size) : size(size) {
+	explicit UploadState(int64 size) : size(size) {
 	}
-	int offset = 0;
-	int size = 0;
+	int64 offset = 0;
+	int64 size = 0;
 	bool waitingForAlbum = false;
 };
 
@@ -49,6 +49,8 @@ Storage::Cache::Key DocumentThumbCacheKey(int32 dcId, uint64 id);
 Storage::Cache::Key WebDocumentCacheKey(const WebFileLocation &location);
 Storage::Cache::Key UrlCacheKey(const QString &location);
 Storage::Cache::Key GeoPointCacheKey(const GeoPointLocation &location);
+Storage::Cache::Key AudioAlbumThumbCacheKey(
+	const AudioAlbumThumbLocation &location);
 
 constexpr auto kImageCacheTag = uint8(0x01);
 constexpr auto kStickerCacheTag = uint8(0x02);
@@ -92,7 +94,6 @@ class PeerData;
 class UserData;
 class ChatData;
 class ChannelData;
-struct BotCommand;
 struct BotInfo;
 
 namespace Data {
@@ -149,7 +150,7 @@ enum LocationType {
 	SecureFileLocation = 0xcbc7ee28, // mtpc_inputSecureFileLocation
 };
 
-enum FileStatus {
+enum FileStatus : signed char {
 	FileDownloadFailed = -2,
 	FileUploadFailed = -1,
 	FileReady = 1,
@@ -267,8 +268,8 @@ enum class MessageFlag : uint32 {
 	// Outgoing message and failed to be sent.
 	SendingFailed         = (1U << 26),
 
-	// No media and only a several emoji text.
-	IsolatedEmoji         = (1U << 27),
+	// No media and only a several emoji or an only custom emoji text.
+	SpecialOnlyEmoji      = (1U << 27),
 
 	// Message existing in the message history.
 	HistoryEntry          = (1U << 28),

@@ -41,7 +41,7 @@ SendMediaReady PrepareRingtoneDocument(
 		MTP_bytes(),
 		MTP_int(base::unixtime::now()),
 		MTP_string(filemime),
-		MTP_int(content.size()),
+		MTP_long(content.size()),
 		MTP_vector<MTPPhotoSize>(),
 		MTPVector<MTPVideoSize>(),
 		MTP_int(dcId),
@@ -191,22 +191,22 @@ void Ringtones::remove(DocumentId id) {
 	}
 }
 
-int Ringtones::maxSize() const {
-	return int(base::SafeRound(_session->account().appConfig().get<double>(
+int64 Ringtones::maxSize() const {
+	return _session->account().appConfig().get<int>(
 		"ringtone_size_max",
-		100 * 1024)));
+		100 * 1024);
 }
 
 int Ringtones::maxSavedCount() const {
-	return int(base::SafeRound(_session->account().appConfig().get<double>(
+	return _session->account().appConfig().get<int>(
 		"ringtone_saved_count_max",
-		100)));
+		100);
 }
 
 int Ringtones::maxDuration() const {
-	return int(base::SafeRound(_session->account().appConfig().get<double>(
+	return _session->account().appConfig().get<int>(
 		"ringtone_duration_max",
-		5)));
+		5);
 }
 
 } // namespace Api

@@ -54,17 +54,18 @@ int64_t File::Context::Seek(void *opaque, int64_t offset, int whence) {
 }
 
 int File::Context::read(bytes::span buffer) {
-	Assert(_size >= _offset);
-	const auto amount = std::min(std::size_t(_size - _offset), buffer.size());
+	Expects(_size >= _offset);
+
+	const auto amount = std::min(_size - _offset, int64(buffer.size()));
 
 	if (unroll()) {
-		return -1;
+		return AVERROR_EXTERNAL;
 	} else if (amount > kMaxSingleReadAmount) {
 		LOG(("Streaming Error: Read callback asked for too much data: %1"
 			).arg(amount));
-		return -1;
+		return AVERROR_EXTERNAL;
 	} else if (!amount) {
-		return amount;
+		return AVERROR_EOF;
 	}
 
 	buffer = buffer.subspan(0, amount);
@@ -86,10 +87,10 @@ int File::Context::read(bytes::span buffer) {
 		}
 		_semaphore.acquire();
 		if (_interrupted) {
-			return -1;
+			return AVERROR_EXTERNAL;
 		} else if (const auto error = _reader->streamingError()) {
 			fail(*error);
-			return -1;
+			return AVERROR_EXTERNAL;
 		}
 	}
 
@@ -102,7 +103,7 @@ int File::Context::read(bytes::span buffer) {
 int64_t File::Context::seek(int64_t offset, int whence) {
 	const auto checkedSeek = [&](int64_t offset) {
 		if (_failed || offset < 0 || offset > _size) {
-			return -1;
+			return int64(-1);
 		}
 		return (_offset = offset);
 	};
@@ -176,7 +177,8 @@ Stream File::Context::initStream(
 			return result;
 		}
 		result.rotation = FFmpeg::ReadRotationFromMetadata(info);
-		result.aspect = FFmpeg::ValidateAspectRatio(info->sample_aspect_ratio);
+		result.aspect = FFmpeg::ValidateAspectRatio(
+			info->sample_aspect_ratio);
 	} else if (type == AVMEDIA_TYPE_AUDIO) {
 		result.frequency = info->codecpar->sample_rate;
 		if (!result.frequency) {

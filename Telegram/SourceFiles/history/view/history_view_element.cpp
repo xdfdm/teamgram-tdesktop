@@ -16,8 +16,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/media/history_view_media_grouped.h"
 #include "history/view/media/history_view_sticker.h"
 #include "history/view/media/history_view_large_emoji.h"
-#include "history/view/history_view_react_animation.h"
-#include "history/view/history_view_react_button.h"
+#include "history/view/media/history_view_custom_emoji.h"
+#include "history/view/reactions/history_view_reactions_animation.h"
+#include "history/view/reactions/history_view_reactions_button.h"
+#include "history/view/reactions/history_view_reactions.h"
 #include "history/view/history_view_cursor_state.h"
 #include "history/history.h"
 #include "base/unixtime.h"
@@ -124,9 +126,9 @@ bool SimpleElementDelegate::elementUnderCursor(
 	return false;
 }
 
-crl::time SimpleElementDelegate::elementHighlightTime(
-		not_null<const HistoryItem*> item) {
-	return crl::time(0);
+float64 SimpleElementDelegate::elementHighlightOpacity(
+		not_null<const HistoryItem*> item) const {
+	return 0.;
 }
 
 bool SimpleElementDelegate::elementInSelectionMode() {
@@ -168,7 +170,7 @@ void SimpleElementDelegate::elementShowTooltip(
 	Fn<void()> hiddenCallback) {
 }
 
-bool SimpleElementDelegate::elementIsGifPaused() {
+bool SimpleElementDelegate::elementAnimationsPaused() {
 	return _controller->isGifPausedAtLeastFor(Window::GifPauseReason::Any);
 }
 
@@ -202,6 +204,15 @@ void SimpleElementDelegate::elementReplyTo(const FullMsgId &to) {
 }
 
 void SimpleElementDelegate::elementStartInteraction(
+	not_null<const Element*> view) {
+}
+
+void SimpleElementDelegate::elementStartPremium(
+	not_null<const Element*> view,
+	Element *replacing) {
+}
+
+void SimpleElementDelegate::elementCancelPremium(
 	not_null<const Element*> view) {
 }
 
@@ -343,15 +354,6 @@ void DateBadge::paint(
 	ServiceMessagePainter::PaintDate(p, st, text, width, y, w, chatWide);
 }
 
-ReactionAnimationArgs ReactionAnimationArgs::translated(
-		QPoint point) const {
-	return {
-		.emoji = emoji,
-		.flyIcon = flyIcon,
-		.flyFrom = flyFrom.translated(point),
-	};
-}
-
 Element::Element(
 	not_null<ElementDelegate*> delegate,
 	not_null<HistoryItem*> data,
@@ -403,6 +405,48 @@ void Element::setY(int y) {
 void Element::refreshDataIdHook() {
 }
 
+void Element::customEmojiRepaint() {
+	if (!_customEmojiRepaintScheduled) {
+		_customEmojiRepaintScheduled = true;
+		history()->owner().requestViewRepaint(this);
+	}
+}
+
+void Element::clearCustomEmojiRepaint() const {
+	_customEmojiRepaintScheduled = false;
+	data()->_customEmojiRepaintScheduled = false;
+}
+
+void Element::prepareCustomEmojiPaint(
+		Painter &p,
+		const PaintContext &context,
+		const Ui::Text::String &text) const {
+	if (!text.hasCustomEmoji()) {
+		return;
+	}
+	clearCustomEmojiRepaint();
+	p.setInactive(context.paused);
+	if (!_heavyCustomEmoji) {
+		_heavyCustomEmoji = true;
+		history()->owner().registerHeavyViewPart(const_cast<Element*>(this));
+	}
+}
+
+void Element::prepareCustomEmojiPaint(
+		Painter &p,
+		const PaintContext &context,
+		const Reactions::InlineList &reactions) const {
+	if (!reactions.hasCustomEmoji()) {
+		return;
+	}
+	clearCustomEmojiRepaint();
+	p.setInactive(context.paused);
+	if (!_heavyCustomEmoji) {
+		_heavyCustomEmoji = true;
+		history()->owner().registerHeavyViewPart(const_cast<Element*>(this));
+	}
+}
+
 void Element::repaint() const {
 	history()->owner().requestViewRepaint(this);
 }
@@ -420,26 +464,13 @@ void Element::paintHighlight(
 	paintCustomHighlight(p, context, skiptop, fillheight, data());
 }
 
-float64 Element::highlightOpacity(not_null<const HistoryItem*> item) const {
-	const auto animms = delegate()->elementHighlightTime(item);
-	if (!animms
-		|| animms >= st::activeFadeInDuration + st::activeFadeOutDuration) {
-		return 0.;
-	}
-
-	return (animms > st::activeFadeInDuration)
-		? (1. - (animms - st::activeFadeInDuration)
-			/ float64(st::activeFadeOutDuration))
-		: (animms / float64(st::activeFadeInDuration));
-}
-
 void Element::paintCustomHighlight(
 		Painter &p,
 		const PaintContext &context,
 		int y,
 		int height,
 		not_null<const HistoryItem*> item) const {
-	const auto opacity = highlightOpacity(item);
+	const auto opacity = delegate()->elementHighlightOpacity(item);
 	if (opacity == 0.) {
 		return;
 	}
@@ -539,16 +570,23 @@ void Element::refreshMedia(Element *replacing) {
 	const auto session = &history()->session();
 	if (const auto media = _data->media()) {
 		_media = media->createView(this, replacing);
+	} else if (_data->isOnlyCustomEmoji()
+		&& Core::App().settings().largeEmoji()) {
+		_media = std::make_unique<UnwrappedMedia>(
+			this,
+			std::make_unique<CustomEmoji>(this, _data->onlyCustomEmoji()));
 	} else if (_data->isIsolatedEmoji()
 		&& Core::App().settings().largeEmoji()) {
 		const auto emoji = _data->isolatedEmoji();
 		const auto emojiStickers = &session->emojiStickersPack();
+		const auto skipPremiumEffect = false;
 		if (const auto sticker = emojiStickers->stickerForEmoji(emoji)) {
 			_media = std::make_unique<UnwrappedMedia>(
 				this,
 				std::make_unique<Sticker>(
 					this,
 					sticker.document,
+					skipPremiumEffect,
 					replacing,
 					sticker.replacements));
 		} else {
@@ -663,18 +701,21 @@ ClickHandlerPtr Element::fromLink() const {
 	}
 	if (const auto forwarded = item->Get<HistoryMessageForwarded>()) {
 		if (forwarded->imported) {
-			static const auto imported = std::make_shared<LambdaClickHandler>([] {
-				Ui::ShowMultilineToast({
-					.text = { tr::lng_forwarded_imported(tr::now) },
-				});
+			static const auto imported = std::make_shared<LambdaClickHandler>([](
+					ClickContext context) {
+				const auto my = context.other.value<ClickHandlerContext>();
+				const auto weak = my.sessionWindow;
+				if (const auto strong = weak.get()) {
+					Ui::ShowMultilineToast({
+						.parentOverride = Window::Show(strong).toastParent(),
+						.text = { tr::lng_forwarded_imported(tr::now) },
+					});
+				}
 			});
 			return imported;
 		}
 	}
-	static const auto hidden = std::make_shared<LambdaClickHandler>([] {
-		Ui::Toast::Show(tr::lng_forwarded_hidden(tr::now));
-	});
-	_fromLink = hidden;
+	_fromLink = HiddenSenderInfo::ForwardClickHandler();
 	return _fromLink;
 }
 
@@ -858,10 +899,6 @@ ClickHandlerPtr Element::rightActionLink() const {
 	return ClickHandlerPtr();
 }
 
-bool Element::displayEditedBadge() const {
-	return false;
-}
-
 TimeId Element::displayedEditDate() const {
 	return TimeId(0);
 }
@@ -887,7 +924,7 @@ auto Element::verticalRepaintRange() const -> VerticalRepaintRange {
 }
 
 bool Element::hasHeavyPart() const {
-	return false;
+	return _heavyCustomEmoji;
 }
 
 void Element::checkHeavyPart() {
@@ -907,6 +944,13 @@ void Element::unloadHeavyPart() {
 	history()->owner().unregisterHeavyViewPart(this);
 	if (_media) {
 		_media->unloadHeavyPart();
+	}
+	if (_heavyCustomEmoji) {
+		_heavyCustomEmoji = false;
+		data()->_text.unloadCustomEmoji();
+		if (const auto reply = data()->Get<HistoryMessageReply>()) {
+			reply->replyToText.unloadCustomEmoji();
+		}
 	}
 }
 
@@ -1061,26 +1105,31 @@ void Element::clickHandlerPressedChanged(
 	}
 }
 
-void Element::animateReaction(ReactionAnimationArgs &&args) {
+void Element::animateReaction(Reactions::AnimationArgs &&args) {
 }
 
 void Element::animateUnreadReactions() {
 	const auto &recent = data()->recentReactions();
-	for (const auto &[emoji, list] : recent) {
+	for (const auto &[id, list] : recent) {
 		if (ranges::contains(list, true, &Data::RecentReaction::unread)) {
-			animateReaction({ .emoji = emoji });
+			animateReaction({ .id = id });
 		}
 	}
 }
 
 auto Element::takeReactionAnimations()
--> base::flat_map<QString, std::unique_ptr<Reactions::Animation>> {
+-> base::flat_map<Data::ReactionId, std::unique_ptr<Reactions::Animation>> {
 	return {};
 }
 
 Element::~Element() {
 	// Delete media while owner still exists.
 	base::take(_media);
+	if (_heavyCustomEmoji) {
+		_heavyCustomEmoji = false;
+		data()->_text.unloadCustomEmoji();
+		checkHeavyPart();
+	}
 	if (_data->mainView() == this) {
 		_data->clearMainView();
 	}

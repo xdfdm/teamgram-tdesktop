@@ -313,7 +313,7 @@ void GroupedMedia::draw(Painter &p, const PaintContext &context) const {
 			selection = part.content->skipSelection(selection);
 		}
 		const auto highlightOpacity = (_mode == Mode::Grid)
-			? _parent->highlightOpacity(part.item)
+			? _parent->delegate()->elementHighlightOpacity(part.item)
 			: 0.;
 		if (!part.cache.isNull()) {
 			wasCache = true;
@@ -344,6 +344,7 @@ void GroupedMedia::draw(Painter &p, const PaintContext &context) const {
 			- _caption.countHeight(captionw);
 		const auto stm = context.messageStyle();
 		p.setPen(stm->historyTextFg);
+		_parent->prepareCustomEmojiPaint(p, context, _caption);
 		_caption.draw(p, st::msgPadding.left(), captiony, captionw, style::al_left, 0, -1, selection);
 	} else if (_parent->media() == this) {
 		auto fullRight = width();
@@ -720,6 +721,7 @@ void GroupedMedia::unloadHeavyPart() {
 		part.cacheKey = 0;
 		part.cache = QPixmap();
 	}
+	_caption.unloadCustomEmoji();
 }
 
 void GroupedMedia::parentTextUpdated() {

@@ -13,9 +13,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_message.h"
 #include "history/view/media/history_view_media.h"
 #include "history/view/media/history_view_web_page.h"
-#include "history/view/history_view_react_animation.h"
-#include "history/view/history_view_react_button.h"
-#include "history/view/history_view_reactions.h"
+#include "history/view/reactions/history_view_reactions.h"
+#include "history/view/reactions/history_view_reactions_animation.h"
+#include "history/view/reactions/history_view_reactions_button.h"
 #include "history/view/history_view_group_call_bar.h" // UserpicInRow.
 #include "history/view/history_view_view_button.h" // ViewButton.
 #include "history/history.h"
@@ -47,6 +47,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 namespace HistoryView {
 namespace {
 
+constexpr auto kPlayStatusLimit = 2;
 const auto kPsaTooltipPrefix = "cloud_lng_tooltip_psa_";
 
 std::optional<Window::SessionController*> ExtractController(
@@ -228,10 +229,13 @@ struct Message::CommentsButton {
 	QImage cachedUserpics;
 	ClickHandlerPtr link;
 	QPoint lastPoint;
+};
 
-	QString rightActionCountString;
-	int rightActionCount = 0;
-	int rightActionCountWidth = 0;
+struct Message::FromNameStatus {
+	DocumentId id = 0;
+	std::unique_ptr<Ui::Text::CustomEmoji> custom;
+	Ui::Text::CustomEmojiColored colored;
+	int skip = 0;
 };
 
 LogEntryOriginal::LogEntryOriginal() = default;
@@ -260,10 +264,12 @@ Message::Message(
 	refreshReactions();
 	auto animations = replacing
 		? replacing->takeReactionAnimations()
-		: base::flat_map<QString, std::unique_ptr<Reactions::Animation>>();
+		: base::flat_map<
+			Data::ReactionId,
+			std::unique_ptr<Reactions::Animation>>();
 	if (!animations.empty()) {
 		const auto repainter = [=] { repaint(); };
-		for (const auto &[emoji, animation] : animations) {
+		for (const auto &[id, animation] : animations) {
 			animation->setRepaintCallback(repainter);
 		}
 		if (_reactions) {
@@ -275,8 +281,9 @@ Message::Message(
 }
 
 Message::~Message() {
-	if (_comments) {
+	if (_comments || (_fromNameStatus && _fromNameStatus->custom)) {
 		_comments = nullptr;
+		_fromNameStatus = nullptr;
 		checkHeavyPart();
 	}
 }
@@ -334,7 +341,7 @@ void Message::applyGroupAdminChanges(
 	}
 }
 
-void Message::animateReaction(ReactionAnimationArgs &&args) {
+void Message::animateReaction(Reactions::AnimationArgs &&args) {
 	const auto item = message();
 	const auto media = this->media();
 
@@ -433,7 +440,7 @@ void Message::animateReaction(ReactionAnimationArgs &&args) {
 }
 
 auto Message::takeReactionAnimations()
--> base::flat_map<QString, std::unique_ptr<Reactions::Animation>> {
+-> base::flat_map<Data::ReactionId, std::unique_ptr<Reactions::Animation>> {
 	return _reactions
 		? _reactions->takeAnimations()
 		: _bottomInfo.takeReactionAnimations();
@@ -539,14 +546,17 @@ QSize Message::performCountOptimalSize() {
 			// They will be added in resizeGetHeight() anyway.
 			if (displayFromName()) {
 				const auto from = item->displayFrom();
+				validateFromNameText(from);
 				const auto &name = from
-					? from->nameText()
-					: item->hiddenSenderInfo()->nameText;
+					? _fromName
+					: item->hiddenSenderInfo()->nameText();
 				auto namew = st::msgPadding.left()
 					+ name.maxWidth()
+					+ (_fromNameStatus ? st::dialogsPremiumIcon.width() : 0)
 					+ st::msgPadding.right();
 				if (via && !displayForwardedFrom()) {
-					namew += st::msgServiceFont->spacew + via->maxWidth;
+					namew += st::msgServiceFont->spacew + via->maxWidth
+						+ (_fromNameStatus ? st::msgServiceFont->spacew : 0);
 				}
 				const auto replyWidth = hasFastReply()
 					? st::msgFont->width(FastReplyText())
@@ -594,7 +604,7 @@ QSize Message::performCountOptimalSize() {
 		minHeight = 0;
 	}
 	if (const auto markup = item->inlineReplyMarkup()) {
-		if (!markup->inlineKeyboard) {
+		if (!markup->inlineKeyboard && !markup->hiddenBy(item->media())) {
 			markup->inlineKeyboard = std::make_unique<ReplyKeyboard>(
 				item,
 				std::make_unique<KeyboardStyle>(st::msgBotKbButton));
@@ -602,7 +612,7 @@ QSize Message::performCountOptimalSize() {
 
 		// if we have a text bubble we can resize it to fit the keyboard
 		// but if we have only media we don't do that
-		if (hasVisibleText()) {
+		if (hasVisibleText() && markup->inlineKeyboard) {
 			accumulate_max(maxWidth, markup->inlineKeyboard->naturalWidth());
 		}
 	}
@@ -736,6 +746,7 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 		g.setHeight(g.height() - reactionsHeight);
 		const auto reactionsPosition = QPoint(reactionsLeft + g.left(), g.top() + g.height() + st::mediaInBubbleSkip);
 		p.translate(reactionsPosition);
+		prepareCustomEmojiPaint(p, context, *_reactions);
 		_reactions->paint(p, context, g.width(), context.clip.translated(-reactionsPosition));
 		if (context.reactionInfo) {
 			context.reactionInfo->position = reactionsPosition;
@@ -746,7 +757,7 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 	if (bubble) {
 		if (displayFromName()
 			&& item->displayFrom()
-			&& item->displayFrom()->nameVersion > item->_fromNameVersion) {
+			&& (_fromNameVersion < item->displayFrom()->nameVersion())) {
 			fromNameUpdated(g.width());
 		}
 
@@ -791,6 +802,7 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 			trect.setHeight(trect.height() - reactionsHeight);
 			const auto reactionsPosition = QPoint(trect.left(), trect.top() + trect.height() + reactionsTop);
 			p.translate(reactionsPosition);
+			prepareCustomEmojiPaint(p, context, *_reactions);
 			_reactions->paint(p, context, g.width(), context.clip.translated(-reactionsPosition));
 			if (context.reactionInfo) {
 				context.reactionInfo->position = reactionsPosition;
@@ -845,7 +857,6 @@ void Message::draw(Painter &p, const PaintContext &context) const {
 			auto mediaPosition = QPoint(
 				inner.left(),
 				trect.y() + trect.height() - mediaHeight);
-
 			p.translate(mediaPosition);
 			media->draw(p, context.translated(
 				-mediaPosition
@@ -1083,33 +1094,79 @@ void Message::paintFromName(
 		availableWidth -= st::msgPadding.right() + rightWidth;
 	}
 
-	p.setFont(st::msgNameFont);
 	const auto stm = context.messageStyle();
-
-	const auto nameText = [&]() -> const Ui::Text::String * {
-		const auto from = item->displayFrom();
-		const auto service = (context.outbg || item->isPost());
-		const auto st = context.st;
+	const auto from = item->displayFrom();
+	const auto info = from ? nullptr : item->hiddenSenderInfo();
+	Assert(from || info);
+	const auto service = (context.outbg || item->isPost());
+	const auto st = context.st;
+	const auto nameFg = !service
+		? FromNameFg(context, from ? from->id : info->colorPeerId)
+		: item->isSponsored()
+		? st->boxTextFgGood()
+		: stm->msgServiceFg;
+	const auto nameText = [&] {
 		if (from) {
-			p.setPen(!service
-				? FromNameFg(context, from->id)
-				: item->isSponsored()
-				? st->boxTextFgGood()
-				: stm->msgServiceFg);
-			return &from->nameText();
-		} else if (const auto info = item->hiddenSenderInfo()) {
-			p.setPen(!service
-				? FromNameFg(context, info->colorPeerId)
-				: item->isSponsored()
-				? st->boxTextFgGood()
-				: stm->msgServiceFg);
-			return &info->nameText;
-		} else {
-			Unexpected("Corrupt sender information in message.");
+			validateFromNameText(from);
+			return static_cast<const Ui::Text::String*>(&_fromName);
 		}
+		return &info->nameText();
 	}();
+	const auto statusWidth = _fromNameStatus
+		? st::dialogsPremiumIcon.width()
+		: 0;
+	if (statusWidth && availableWidth > statusWidth) {
+		const auto x = availableLeft
+			+ std::min(availableWidth - statusWidth, nameText->maxWidth());
+		const auto y = trect.top();
+		const auto color = QColor(
+			nameFg->c.red(),
+			nameFg->c.green(),
+			nameFg->c.blue(),
+			nameFg->c.alpha() * 115 / 255);
+		const auto user = from->asUser();
+		const auto id = user ? user->emojiStatusId() : 0;
+		if (_fromNameStatus->id != id) {
+			const auto that = const_cast<Message*>(this);
+			_fromNameStatus->custom = id
+				? std::make_unique<Ui::Text::LimitedLoopsEmoji>(
+					user->owner().customEmojiManager().create(
+						id,
+						[=] { that->customEmojiRepaint(); }),
+					kPlayStatusLimit)
+				: nullptr;
+			if (id && !_fromNameStatus->id) {
+				history()->owner().registerHeavyViewPart(that);
+			} else if (!id && _fromNameStatus->id) {
+				that->checkHeavyPart();
+			}
+			_fromNameStatus->id = id;
+		}
+		if (_fromNameStatus->custom) {
+			clearCustomEmojiRepaint();
+			_fromNameStatus->colored.color = color;
+			_fromNameStatus->custom->paint(p, {
+				.preview = color,
+				.colored = &_fromNameStatus->colored,
+				.now = context.now,
+				.position = QPoint(
+					x - 2 * _fromNameStatus->skip,
+					y + _fromNameStatus->skip),
+				.paused = context.paused,
+			});
+		} else {
+			st::dialogsPremiumIcon.paint(p, x, y, width(), color);
+		}
+		availableWidth -= statusWidth;
+	}
+	p.setFont(st::msgNameFont);
+	p.setPen(nameFg);
 	nameText->drawElided(p, availableLeft, trect.top(), availableWidth);
-	const auto skipWidth = nameText->maxWidth() + st::msgServiceFont->spacew;
+	const auto skipWidth = nameText->maxWidth()
+		+ (_fromNameStatus
+			? (st::dialogsPremiumIcon.width() + st::msgServiceFont->spacew)
+			: 0)
+		+ st::msgServiceFont->spacew;
 	availableLeft += skipWidth;
 	availableWidth -= skipWidth;
 
@@ -1241,7 +1298,16 @@ void Message::paintText(
 	const auto stm = context.messageStyle();
 	p.setPen(stm->historyTextFg);
 	p.setFont(st::msgFont);
-	item->_text.draw(p, trect.x(), trect.y(), trect.width(), style::al_left, 0, -1, context.selection);
+	prepareCustomEmojiPaint(p, context, item->_text);
+	item->_text.draw(
+		p,
+		trect.x(),
+		trect.y(),
+		trect.width(),
+		style::al_left,
+		0,
+		-1,
+		context.selection);
 }
 
 PointState Message::pointState(QPoint point) const {
@@ -1368,12 +1434,21 @@ void Message::toggleCommentsButtonRipple(bool pressed) {
 }
 
 bool Message::hasHeavyPart() const {
-	return _comments || Element::hasHeavyPart();
+	return _comments
+		|| (_fromNameStatus && _fromNameStatus->custom)
+		|| Element::hasHeavyPart();
 }
 
 void Message::unloadHeavyPart() {
 	Element::unloadHeavyPart();
+	if (_reactions) {
+		_reactions->unloadCustomEmoji();
+	}
 	_comments = nullptr;
+	if (_fromNameStatus) {
+		_fromNameStatus->custom = nullptr;
+		_fromNameStatus->id = 0;
+	}
 }
 
 bool Message::showForwardsFromSender(
@@ -1651,6 +1726,7 @@ ClickHandlerPtr Message::createGoToCommentsLink() const {
 			if (const auto channel = history->peer->asChannel()) {
 				if (channel->invitePeekExpires()) {
 					Ui::Toast::Show(
+						Window::Show(controller).toastParent(),
 						tr::lng_channel_invite_private(tr::now));
 					return;
 				}
@@ -1689,9 +1765,10 @@ bool Message::getStateFromName(
 			const auto from = item->displayFrom();
 			const auto nameText = [&]() -> const Ui::Text::String * {
 				if (from) {
-					return &from->nameText();
+					validateFromNameText(from);
+					return &_fromName;
 				} else if (const auto info = item->hiddenSenderInfo()) {
-					return &info->nameText;
+					return &info->nameText();
 				} else {
 					Unexpected("Corrupt forwarded information in message.");
 				}
@@ -2153,7 +2230,34 @@ bool Message::isSignedAuthorElided() const {
 }
 
 bool Message::embedReactionsInBottomInfo() const {
-	return data()->history()->peer->isUser();
+	const auto item = data();
+	const auto user = item->history()->peer->asUser();
+	if (!user || user->isPremium() || user->session().premium()) {
+		// Only in messages of a non premium user with a non premium user.
+		return false;
+	}
+	auto seenMy = false;
+	auto seenHis = false;
+	for (const auto &reaction : item->reactions()) {
+		if (reaction.id.custom()) {
+			// Only in messages without any custom emoji reactions.
+			return false;
+		}
+		// Only in messages without two reactions from the same person.
+		if (reaction.my) {
+			if (seenMy) {
+				return false;
+			}
+			seenMy = true;
+		}
+		if (!reaction.my || (reaction.count > 1)) {
+			if (seenHis) {
+				return false;
+			}
+			seenHis = true;
+		}
+	}
+	return true;
 }
 
 bool Message::embedReactionsInBubble() const {
@@ -2170,15 +2274,18 @@ void Message::refreshReactions() {
 	using namespace Reactions;
 	auto reactionsData = InlineListDataFromMessage(this);
 	if (!_reactions) {
-		const auto handlerFactory = [=](QString emoji) {
+		const auto handlerFactory = [=](ReactionId id) {
 			const auto weak = base::make_weak(this);
 			return std::make_shared<LambdaClickHandler>([=] {
 				if (const auto strong = weak.get()) {
-					strong->data()->toggleReaction(emoji);
+					strong->data()->toggleReaction(
+						id,
+						HistoryItem::ReactionSource::Existing);
 					if (const auto now = weak.get()) {
-						if (now->data()->chosenReaction() == emoji) {
+						const auto chosen = now->data()->chosenReactions();
+						if (ranges::contains(chosen, id)) {
 							now->animateReaction({
-								.emoji = emoji,
+								.id = id,
 							});
 						}
 					}
@@ -2188,9 +2295,37 @@ void Message::refreshReactions() {
 		_reactions = std::make_unique<InlineList>(
 			&item->history()->owner().reactions(),
 			handlerFactory,
+			[=] { customEmojiRepaint(); },
 			std::move(reactionsData));
 	} else {
 		_reactions->update(std::move(reactionsData), width());
+	}
+}
+
+void Message::validateFromNameText(PeerData *from) const {
+	if (!from) {
+		if (_fromNameStatus) {
+			_fromNameStatus = nullptr;
+		}
+		return;
+	}
+	const auto version = from->nameVersion();
+	if (_fromNameVersion < version) {
+		_fromNameVersion = version;
+		_fromName.setText(
+			st::msgNameStyle,
+			from->name(),
+			Ui::NameTextOptions());
+	}
+	if (from->isPremium()) {
+		if (!_fromNameStatus) {
+			_fromNameStatus = std::make_unique<FromNameStatus>();
+			const auto size = st::emojiSize;
+			const auto emoji = Ui::Text::AdjustCustomEmojiSize(size);
+			_fromNameStatus->skip = (size - emoji) / 2;
+		}
+	} else if (_fromNameStatus) {
+		_fromNameStatus = nullptr;
 	}
 }
 
@@ -2729,14 +2864,14 @@ void Message::fromNameUpdated(int width) const {
 		width -= st::msgPadding.right() + replyWidth;
 	}
 	const auto from = item->displayFrom();
-	item->_fromNameVersion = from ? from->nameVersion : 1;
+	validateFromNameText(from);
 	if (const auto via = item->Get<HistoryMessageVia>()) {
 		if (!displayForwardedFrom()) {
 			const auto nameText = [&]() -> const Ui::Text::String * {
 				if (from) {
-					return &from->nameText();
-				} else if (const auto info = item->hiddenSenderInfo()) {
-					return &info->nameText;
+					return &_fromName;
+				} else if (const auto info	= item->hiddenSenderInfo()) {
+					return &info->nameText();
 				} else {
 					Unexpected("Corrupted forwarded information in message.");
 				}
@@ -2745,6 +2880,10 @@ void Message::fromNameUpdated(int width) const {
 				- st::msgPadding.left()
 				- st::msgPadding.right()
 				- nameText->maxWidth()
+				+ (_fromNameStatus
+					? (st::dialogsPremiumIcon.width()
+						+ st::msgServiceFont->spacew)
+					: 0)
 				- st::msgServiceFont->spacew);
 		}
 	}
@@ -3071,10 +3210,6 @@ void Message::refreshInfoSkipBlock() {
 		item->_textWidth = -1;
 		item->_textHeight = 0;
 	}
-}
-
-bool Message::displayEditedBadge() const {
-	return (displayedEditDate() != TimeId(0));
 }
 
 TimeId Message::displayedEditDate() const {

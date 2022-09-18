@@ -8,6 +8,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #pragma once
 
 #include "ui/rp_widget.h"
+#include "ui/unread_badge.h"
 #include "ui/effects/animations.h"
 #include "base/timer.h"
 #include "base/object_ptr.h"
@@ -108,7 +109,6 @@ private:
 
 	void call();
 	void groupCall();
-	void startGroupCall(not_null<ChannelData*> megagroup, bool confirmed);
 	void showPeerMenu();
 	void showGroupCallMenu(not_null<PeerData*> peer);
 	void toggleInfoSection();
@@ -154,10 +154,15 @@ private:
 	[[nodiscard]] bool showSelectedActions() const;
 
 	const not_null<Window::SessionController*> _controller;
+	const bool _primaryWindow = false;
 	ActiveChat _activeChat;
 	QString _customTitleText;
 	std::unique_ptr<EmojiInteractionSeenAnimation> _emojiInteractionSeen;
 	rpl::lifetime _activeChatLifetime;
+
+	Ui::PeerBadge _titleBadge;
+	Ui::Text::String _title;
+	int _titleNameVersion = 0;
 
 	int _selectedCount = 0;
 	bool _canDelete = false;

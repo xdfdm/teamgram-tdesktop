@@ -21,7 +21,8 @@ class UnwrappedMedia final : public Media {
 public:
 	class Content {
 	public:
-		[[nodiscard]] virtual QSize size() = 0;
+		[[nodiscard]] virtual QSize countOptimalSize() = 0;
+		[[nodiscard]] virtual QSize countCurrentSize(int newWidth);
 
 		virtual void draw(
 			Painter &p,
@@ -37,9 +38,10 @@ public:
 		}
 		virtual void stickerClearLoopPlayed() {
 		}
-		virtual std::unique_ptr<Lottie::SinglePlayer> stickerTakeLottie(
+		virtual std::unique_ptr<StickerPlayer> stickerTakePlayer(
 			not_null<DocumentData*> data,
 			const Lottie::ColorReplacements *replacements);
+
 		virtual bool hasHeavyPart() const {
 			return false;
 		}
@@ -48,6 +50,9 @@ public:
 		virtual void refreshLink() {
 		}
 		[[nodiscard]] virtual bool alwaysShowOutTimestamp() {
+			return false;
+		}
+		virtual bool hasTextForCopy() const {
 			return false;
 		}
 		virtual ~Content() = default;
@@ -60,6 +65,8 @@ public:
 	void draw(Painter &p, const PaintContext &context) const override;
 	PointState pointState(QPoint point) const override;
 	TextState textState(QPoint point, StateRequest request) const override;
+
+	bool hasTextForCopy() const override;
 
 	bool toggleSelectionByHandlerClick(const ClickHandlerPtr &p) const override {
 		return true;
@@ -88,7 +95,7 @@ public:
 	void stickerClearLoopPlayed() override {
 		_content->stickerClearLoopPlayed();
 	}
-	std::unique_ptr<Lottie::SinglePlayer> stickerTakeLottie(
+	std::unique_ptr<StickerPlayer> stickerTakePlayer(
 		not_null<DocumentData*> data,
 		const Lottie::ColorReplacements *replacements) override;
 
@@ -142,6 +149,8 @@ private:
 
 	std::unique_ptr<Content> _content;
 	QSize _contentSize;
+	int _topAdded = 0;
+	bool _additionalOnTop = false;
 
 };
 

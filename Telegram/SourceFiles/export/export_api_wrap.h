@@ -14,6 +14,7 @@ namespace Export {
 namespace Data {
 struct File;
 struct Chat;
+struct Document;
 struct FileLocation;
 struct PersonalInfo;
 struct UserpicsInfo;
@@ -64,8 +65,8 @@ public:
 		uint64 randomId = 0;
 		QString path;
 		int itemIndex = 0;
-		int ready = 0;
-		int total = 0;
+		int64 ready = 0;
+		int64 total = 0;
 	};
 	void requestUserpics(
 		FnMut<bool(Data::UserpicsInfo&&)> start,
@@ -156,12 +157,17 @@ private:
 		int addOffset,
 		int limit,
 		FnMut<void(MTPmessages_Messages&&)> done);
+	void collectMessagesCustomEmoji(const Data::MessagesSlice &slice);
+	void resolveCustomEmoji();
 	void loadMessagesFiles(Data::MessagesSlice &&slice);
 	void loadNextMessageFile();
+	bool messageCustomEmojiReady(Data::Message &message);
 	bool loadMessageFileProgress(FileProgress value);
 	void loadMessageFileDone(const QString &relativePath);
 	bool loadMessageThumbProgress(FileProgress value);
 	void loadMessageThumbDone(const QString &relativePath);
+	bool loadMessageEmojiProgress(FileProgress progress);
+	void loadMessageEmojiDone(uint64 id, const QString &relativePath);
 	void finishMessagesSlice();
 	void finishMessages();
 
@@ -186,11 +192,11 @@ private:
 		Fn<bool(FileProgress)> progress,
 		FnMut<void(QString)> done);
 	void loadFilePart();
-	void filePartDone(int offset, const MTPupload_File &result);
+	void filePartDone(int64 offset, const MTPupload_File &result);
 	void filePartUnavailable();
-	void filePartRefreshReference(int offset);
+	void filePartRefreshReference(int64 offset);
 	void filePartExtractReference(
-		int offset,
+		int64 offset,
 		const MTPmessages_Messages &result);
 
 	template <typename Request>
@@ -204,7 +210,7 @@ private:
 
 	[[nodiscard]] auto fileRequest(
 		const Data::FileLocation &location,
-		int offset);
+		int64 offset);
 
 	void error(const MTP::Error &error);
 	void error(const QString &text);
@@ -227,6 +233,8 @@ private:
 	std::unique_ptr<LeftChannelsProcess> _leftChannelsProcess;
 	std::unique_ptr<DialogsProcess> _dialogsProcess;
 	std::unique_ptr<ChatProcess> _chatProcess;
+	base::flat_set<uint64> _unresolvedCustomEmoji;
+	base::flat_map<uint64, Data::Document> _resolvedCustomEmoji;
 	QVector<MTPMessageRange> _splits;
 
 	rpl::event_stream<MTP::Error> _errors;

@@ -21,6 +21,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_service_message.h"
 #include "history/view/media/history_view_document.h"
 #include "core/click_handler_types.h"
+#include "core/ui_integration.h"
 #include "layout/layout_position.h"
 #include "mainwindow.h"
 #include "media/audio/media_audio.h"
@@ -34,7 +35,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_click_handler.h"
 #include "main/main_session.h"
 #include "window/window_session_controller.h"
-#include "facades.h"
+#include "api/api_bot.h"
 #include "styles/style_widgets.h"
 #include "styles/style_chat.h"
 
@@ -53,26 +54,25 @@ void HistoryMessageVia::create(
 	maxWidth = st::msgServiceNameFont->width(
 		tr::lng_inline_bot_via(tr::now, lt_inline_bot, '@' + bot->username));
 	link = std::make_shared<LambdaClickHandler>([bot = this->bot](
-			ClickContext context) {
-		if (const auto window = App::wnd()) {
-			if (const auto controller = window->sessionController()) {
-				if (base::IsCtrlPressed()) {
-					controller->showPeerInfo(bot);
-					return;
-				} else if (!bot->isBot()
-					|| bot->botInfo->inlinePlaceholder.isEmpty()) {
-					controller->showPeerHistory(
-						bot->id,
-						Window::SectionShow::Way::Forward);
-					return;
-				}
+		ClickContext context) {
+		const auto my = context.other.value<ClickHandlerContext>();
+		if (const auto controller = my.sessionWindow.get()) {
+			if (base::IsCtrlPressed()) {
+				controller->showPeerInfo(bot);
+				return;
+			} else if (!bot->isBot()
+				|| bot->botInfo->inlinePlaceholder.isEmpty()) {
+				controller->showPeerHistory(
+					bot->id,
+					Window::SectionShow::Way::Forward);
+				return;
 			}
 		}
-		const auto my = context.other.value<ClickHandlerContext>();
-		if (const auto delegate = my.elementDelegate ? my.elementDelegate() : nullptr) {
+		const auto delegate = my.elementDelegate
+			? my.elementDelegate()
+			: nullptr;
+		if (delegate) {
 			delegate->elementHandleViaClick(bot);
-		} else {
-			App::insertBotCommand('@' + bot->username);
 		}
 	});
 }
@@ -102,7 +102,6 @@ HiddenSenderInfo::HiddenSenderInfo(const QString &name, bool external)
 		: name)) {
 	Expects(!name.isEmpty());
 
-	nameText.setText(st::msgNameStyle, name, Ui::NameTextOptions());
 	const auto parts = name.trimmed().split(' ', Qt::SkipEmptyParts);
 	firstName = parts[0];
 	for (const auto &part : parts.mid(1)) {
@@ -111,6 +110,27 @@ HiddenSenderInfo::HiddenSenderInfo(const QString &name, bool external)
 		}
 		lastName.append(part);
 	}
+}
+
+const Ui::Text::String &HiddenSenderInfo::nameText() const {
+	if (_nameText.isEmpty()) {
+		_nameText.setText(st::msgNameStyle, name, Ui::NameTextOptions());
+	}
+	return _nameText;
+}
+
+ClickHandlerPtr HiddenSenderInfo::ForwardClickHandler() {
+	static const auto hidden = std::make_shared<LambdaClickHandler>([](
+			ClickContext context) {
+		const auto my = context.other.value<ClickHandlerContext>();
+		const auto weak = my.sessionWindow;
+		if (const auto strong = weak.get()) {
+			Ui::Toast::Show(
+				Window::Show(strong).toastParent(),
+				tr::lng_forwarded_hidden(tr::now));
+		}
+	});
+	return hidden;
 }
 
 bool HiddenSenderInfo::paintCustomUserpic(
@@ -139,7 +159,9 @@ void HistoryMessageForwarded::create(const HistoryMessageVia *via) const {
 		&& originalSender->isChannel()
 		&& !originalSender->isMegagroup();
 	const auto name = TextWithEntities{
-		.text = originalSender ? originalSender->name : hiddenSenderInfo->name
+		.text = (originalSender
+			? originalSender->name()
+			: hiddenSenderInfo->name)
 	};
 	if (!originalAuthor.isEmpty()) {
 		phrase = tr::lng_forwarded_signed(
@@ -202,15 +224,12 @@ void HistoryMessageForwarded::create(const HistoryMessageVia *via) const {
 		}
 	}
 	text.setMarkedText(st::fwdTextStyle, phrase);
-	static const auto hidden = std::make_shared<LambdaClickHandler>([] {
-		Ui::Toast::Show(tr::lng_forwarded_hidden(tr::now));
-	});
 
 	text.setLink(1, fromChannel
 		? goToMessageClickHandler(originalSender, originalId)
 		: originalSender
 		? originalSender->openLink()
-		: hidden);
+		: HiddenSenderInfo::ForwardClickHandler());
 	if (via) {
 		text.setLink(2, via->link);
 	}
@@ -245,10 +264,15 @@ bool HistoryMessageReply::updateData(
 	}
 
 	if (replyToMsg) {
+		const auto context = Core::MarkedTextContext{
+			.session = &holder->history()->session(),
+			.customEmojiRepaint = [=] { holder->customEmojiRepaint(); },
+		};
 		replyToText.setMarkedText(
 			st::messageTextStyle,
 			replyToMsg->inReplyText(),
-			Ui::DialogTextOptions());
+			Ui::DialogTextOptions(),
+			context);
 
 		updateName(holder);
 
@@ -326,13 +350,13 @@ QString HistoryMessageReply::replyToFromName(
 	if (const auto user = replyToVia ? peer->asUser() : nullptr) {
 		return user->firstName;
 	}
-	return peer->name;
+	return peer->name();
 }
 
 bool HistoryMessageReply::isNameUpdated(
 		not_null<HistoryMessage*> holder) const {
 	if (const auto from = replyToFrom(holder)) {
-		if (from->nameVersion > replyToVersion) {
+		if (replyToVersion < from->nameVersion()) {
 			updateName(holder);
 			return true;
 		}
@@ -344,7 +368,11 @@ void HistoryMessageReply::updateName(
 		not_null<HistoryMessage*> holder) const {
 	if (const auto name = replyToFromName(holder); !name.isEmpty()) {
 		replyToName.setText(st::fwdTextStyle, name, Ui::NameTextOptions());
-		replyToVersion = replyToMsg->author()->nameVersion;
+		if (const auto from = replyToFrom(holder)) {
+			replyToVersion = from->nameVersion();
+		} else {
+			replyToVersion = replyToMsg->author()->nameVersion();
+		}
 		bool hasPreview = replyToMsg->media() ? replyToMsg->media()->hasReplyPreview() : false;
 		int32 previewSkip = hasPreview ? (st::msgReplyBarSize.height() + st::msgReplyBarSkip - st::msgReplyBarSize.width() - st::msgReplyBarPos.x()) : 0;
 		int32 w = replyToName.maxWidth();
@@ -432,6 +460,7 @@ void HistoryMessageReply::paint(
 				p.setTextPalette(inBubble
 					? stm->replyTextPalette
 					: st->imgReplyTextPalette());
+				holder->prepareCustomEmojiPaint(p, context, replyToText);
 				replyToText.drawLeftElided(p, x + st::msgReplyBarSkip + previewSkip, y + st::msgReplyPadding.top() + st::msgServiceNameFont->height, w - st::msgReplyBarSkip - previewSkip, w + 2 * x);
 				p.setTextPalette(stm->textPalette);
 			}
@@ -502,10 +531,9 @@ void ReplyMarkupClickHandler::onClick(ClickContext context) const {
 	if (context.button != Qt::LeftButton) {
 		return;
 	}
-	if (const auto item = _owner->message(_itemId)) {
-		const auto my = context.other.value<ClickHandlerContext>();
-		App::activateBotCommand(my.sessionWindow.get(), item, _row, _column);
-	}
+	auto my = context.other.value<ClickHandlerContext>();
+	my.itemId = _itemId;
+	Api::ActivateBotCommand(my, _row, _column);
 }
 
 // Returns the full text of the corresponding button.
@@ -886,6 +914,18 @@ void HistoryMessageReplyMarkup::updateData(
 	inlineKeyboard = nullptr;
 }
 
+bool HistoryMessageReplyMarkup::hiddenBy(Data::Media *media) const {
+	if (media && (data.flags & ReplyMarkupFlag::OnlyBuyButton)) {
+		if (const auto invoice = media->invoice()) {
+			if (invoice->extendedPreview
+				&& (!invoice->extendedMedia || !invoice->receiptMsgId)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
 HistoryMessageLogEntryOriginal::HistoryMessageLogEntryOriginal() = default;
 
 HistoryMessageLogEntryOriginal::HistoryMessageLogEntryOriginal(
@@ -936,4 +976,24 @@ void HistoryDocumentVoice::startSeeking() {
 void HistoryDocumentVoice::stopSeeking() {
 	_seeking = false;
 	Media::Player::instance()->cancelSeeking(AudioMsgId::Type::Voice);
+}
+
+bool HistoryDocumentVoice::seeking() const {
+	return _seeking;
+}
+
+float64 HistoryDocumentVoice::seekingStart() const {
+	return _seekingStart / kFloatToIntMultiplier;
+}
+
+void HistoryDocumentVoice::setSeekingStart(float64 seekingStart) const {
+	_seekingStart = qRound(seekingStart * kFloatToIntMultiplier);
+}
+
+float64 HistoryDocumentVoice::seekingCurrent() const {
+	return _seekingCurrent / kFloatToIntMultiplier;
+}
+
+void HistoryDocumentVoice::setSeekingCurrent(float64 seekingCurrent) {
+	_seekingCurrent = qRound(seekingCurrent * kFloatToIntMultiplier);
 }

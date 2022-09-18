@@ -24,10 +24,12 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_schedule_box.h"
 #include "history/view/media/history_view_media.h"
 #include "history/view/media/history_view_web_page.h"
-#include "history/view/reactions/message_reactions_list.h"
+#include "history/view/reactions/history_view_reactions_list.h"
 #include "ui/widgets/popup_menu.h"
+#include "ui/widgets/menu/menu_item_base.h"
 #include "ui/image/image.h"
 #include "ui/toast/toast.h"
+#include "ui/text/text_utilities.h"
 #include "ui/controls/delete_message_context_action.h"
 #include "ui/controls/who_reacted_context_action.h"
 #include "ui/boxes/report_box.h"
@@ -37,6 +39,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/delete_messages_box.h"
 #include "boxes/report_messages_box.h"
 #include "boxes/sticker_set_box.h"
+#include "boxes/stickers_box.h"
 #include "data/data_photo.h"
 #include "data/data_photo_media.h"
 #include "data/data_document.h"
@@ -48,6 +51,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_file_origin.h"
 #include "data/data_scheduled_messages.h"
 #include "data/data_message_reactions.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "core/file_utilities.h"
 #include "core/click_handler_types.h"
 #include "base/platform/base_platform_info.h"
@@ -129,9 +133,10 @@ void ShowStickerPackInfo(
 }
 
 void ToggleFavedSticker(
+		not_null<Window::SessionController*> controller,
 		not_null<DocumentData*> document,
 		FullMsgId contextId) {
-	Api::ToggleFavedSticker(document, contextId);
+	Api::ToggleFavedSticker(controller, document, contextId);
 }
 
 void AddPhotoActions(
@@ -174,7 +179,11 @@ void SaveGif(
 	if (const auto item = controller->session().data().message(itemId)) {
 		if (const auto media = item->media()) {
 			if (const auto document = media->document()) {
-				Api::ToggleSavedGif(document, item->fullId(), true);
+				Api::ToggleSavedGif(
+					controller,
+					document,
+					item->fullId(),
+					true);
 			}
 		}
 	}
@@ -243,6 +252,7 @@ void AddDocumentActions(
 		}, &st::menuIconCancel);
 		return;
 	}
+	const auto controller = list->controller();
 	const auto contextId = item ? item->fullId() : FullMsgId();
 	const auto session = &document->session();
 	if (item && document->isGifv()) {
@@ -273,7 +283,7 @@ void AddDocumentActions(
 			(isFaved
 				? tr::lng_faved_stickers_remove(tr::now)
 				: tr::lng_faved_stickers_add(tr::now)),
-			[=] { ToggleFavedSticker(document, contextId); },
+			[=] { ToggleFavedSticker(controller, document, contextId); },
 			isFaved ? &st::menuIconUnfave : &st::menuIconFave);
 	}
 	if (!document->filepath(true).isEmpty()) {
@@ -314,16 +324,16 @@ void AddPostLinkAction(
 		&& !request.link->copyToClipboardContextItemText().isEmpty()) {
 		return;
 	}
-	const auto session = &item->history()->session();
 	const auto itemId = item->fullId();
 	const auto context = request.view
 		? request.view->context()
 		: Context::History;
+	const auto controller = request.navigation->parentController();
 	menu->addAction(
 		(item->history()->peer->isMegagroup()
 			? tr::lng_context_copy_message_link
 			: tr::lng_context_copy_post_link)(tr::now),
-		[=] { CopyPostLink(session, itemId, context); },
+		[=] { CopyPostLink(controller, itemId, context); },
 		&st::menuIconLink);
 }
 
@@ -938,11 +948,12 @@ base::unique_qptr<Ui::PopupMenu> FillContextMenu(
 		: nullptr;
 	const auto hasSelection = !request.selectedItems.empty()
 		|| !request.selectedText.empty();
-	const auto hasWhoReactedItem = item && Api::WhoReactedExists(item);
+	const auto hasWhoReactedItem = item
+		&& Api::WhoReactedExists(item, Api::WhoReactedList::All);
 
 	auto result = base::make_unique_q<Ui::PopupMenu>(
 		list,
-		hasWhoReactedItem ? st::whoReadMenu : st::popupMenuWithIcons);
+		st::popupMenuWithIcons);
 
 	if (request.overSelection && !list->hasCopyRestrictionForSelected()) {
 		const auto text = request.selectedItems.empty()
@@ -964,7 +975,7 @@ base::unique_qptr<Ui::PopupMenu> FillContextMenu(
 		const auto context = list->elementContext();
 		AddPollActions(result, poll, item, context, list->controller());
 	} else if (!request.overSelection && view && !hasSelection) {
-		const auto owner = &view->data()->history()->owner();
+		const auto owner = &view->history()->owner();
 		const auto media = view->media();
 		const auto mediaHasTextForCopy = media && media->hasTextForCopy();
 		if (const auto document = media ? media->getDocument() : nullptr) {
@@ -993,6 +1004,13 @@ base::unique_qptr<Ui::PopupMenu> FillContextMenu(
 	AddCopyLinkAction(result, link);
 	AddMessageActions(result, request, list);
 
+	if (item) {
+		AddEmojiPacksAction(
+			result,
+			item,
+			HistoryView::EmojiPacksSource::Message,
+			list->controller());
+	}
 	if (hasWhoReactedItem) {
 		AddWhoReactedAction(result, list, item, list->controller());
 	}
@@ -1001,10 +1019,10 @@ base::unique_qptr<Ui::PopupMenu> FillContextMenu(
 }
 
 void CopyPostLink(
-		not_null<Main::Session*> session,
+		not_null<Window::SessionController*> controller,
 		FullMsgId itemId,
 		Context context) {
-	const auto item = session->data().message(itemId);
+	const auto item = controller->session().data().message(itemId);
 	if (!item || !item->hasDirectLink()) {
 		return;
 	}
@@ -1031,9 +1049,11 @@ void CopyPostLink(
 		return channel->hasUsername();
 	}();
 
-	Ui::Toast::Show(isPublicLink
-		? tr::lng_channel_public_link_copied(tr::now)
-		: tr::lng_context_about_private_link(tr::now));
+	Ui::Toast::Show(
+		Window::Show(controller).toastParent(),
+		isPublicLink
+			? tr::lng_channel_public_link_copied(tr::now)
+			: tr::lng_context_about_private_link(tr::now));
 }
 
 void AddPollActions(
@@ -1126,19 +1146,20 @@ void AddWhoReactedAction(
 			strong->hideMenu();
 		}
 		if (const auto item = controller->session().data().message(itemId)) {
-			controller->window().show(ReactionsListBox(
+			controller->window().show(Reactions::FullListBox(
 				controller,
 				item,
-				QString(),
+				{},
 				whoReadIds));
 		}
 	};
 	if (!menu->empty()) {
-		menu->addSeparator();
+		menu->addSeparator(&st::expandedMenuSeparator);
 	}
 	menu->addAction(Ui::WhoReactedContextAction(
 		menu.get(),
 		Api::WhoReacted(item, context, st::defaultWhoRead, whoReadIds),
+		Data::ReactedMenuFactory(&controller->session()),
 		participantChosen,
 		showAllChosen));
 }
@@ -1148,43 +1169,65 @@ void ShowWhoReactedMenu(
 		QPoint position,
 		not_null<QWidget*> context,
 		not_null<HistoryItem*> item,
-		const QString &emoji,
+		const Data::ReactionId &id,
 		not_null<Window::SessionController*> controller,
 		rpl::lifetime &lifetime) {
+	struct State {
+		int addedToBottom = 0;
+	};
 	const auto participantChosen = [=](uint64 id) {
 		controller->showPeerInfo(PeerId(id));
 	};
 	const auto showAllChosen = [=, itemId = item->fullId()]{
 		if (const auto item = controller->session().data().message(itemId)) {
-			controller->window().show(ReactionsListBox(
+			controller->window().show(Reactions::FullListBox(
 				controller,
 				item,
-				emoji));
+				id));
 		}
 	};
-	const auto reactions = &controller->session().data().reactions();
+	const auto owner = &controller->session().data();
+	const auto reactions = &owner->reactions();
 	const auto &list = reactions->list(
 		Data::Reactions::Type::Active);
-	const auto activeNonQuick = (emoji != reactions->favorite())
-		&& ranges::contains(list, emoji, &Data::Reaction::emoji);
+	const auto activeNonQuick = (id != reactions->favoriteId())
+		&& (ranges::contains(list, id, &Data::Reaction::id)
+			|| (controller->session().premium() && id.custom()));
 	const auto filler = lifetime.make_state<Ui::WhoReactedListMenu>(
+		Data::ReactedMenuFactory(&controller->session()),
 		participantChosen,
 		showAllChosen);
+	const auto state = lifetime.make_state<State>();
 	Api::WhoReacted(
 		item,
-		emoji,
+		id,
 		context,
 		st::defaultWhoRead
 	) | rpl::filter([=](const Ui::WhoReadContent &content) {
 		return !content.unknown;
 	}) | rpl::start_with_next([=, &lifetime](Ui::WhoReadContent &&content) {
 		const auto creating = !*menu;
-		const auto refill = [=] {
+		const auto refillTop = [=] {
 			if (activeNonQuick) {
 				(*menu)->addAction(tr::lng_context_set_as_quick(tr::now), [=] {
-					reactions->setFavorite(emoji);
+					reactions->setFavorite(id);
 				}, &st::menuIconFave);
 				(*menu)->addSeparator();
+			}
+		};
+		const auto appendBottom = [=] {
+			state->addedToBottom = 0;
+			if (const auto custom = id.custom()) {
+				if (const auto set = owner->document(custom)->sticker()) {
+					if (set->set.id) {
+						state->addedToBottom = 2;
+						AddEmojiPacksAction(
+							menu->get(),
+							{ set->set },
+							EmojiPacksSource::Reaction,
+							controller);
+					}
+				}
 			}
 		};
 		if (creating) {
@@ -1192,14 +1235,221 @@ void ShowWhoReactedMenu(
 				context,
 				st::whoReadMenu);
 			(*menu)->lifetime().add(base::take(lifetime));
-			refill();
+			refillTop();
 		}
-		filler->populate(menu->get(), content);
-
+		filler->populate(
+			menu->get(),
+			content,
+			refillTop,
+			state->addedToBottom,
+			appendBottom);
 		if (creating) {
 			(*menu)->popup(position);
 		}
 	}, lifetime);
+}
+
+std::vector<StickerSetIdentifier> CollectEmojiPacks(
+		not_null<HistoryItem*> item,
+		EmojiPacksSource source) {
+	auto result = std::vector<StickerSetIdentifier>();
+	const auto owner = &item->history()->owner();
+	const auto push = [&](DocumentId id) {
+		if (const auto set = owner->document(id)->sticker()) {
+			if (set->set.id
+				&& !ranges::contains(
+					result,
+					set->set.id,
+					&StickerSetIdentifier::id)) {
+				result.push_back(set->set);
+			}
+		}
+	};
+	switch (source) {
+	case EmojiPacksSource::Message:
+		for (const auto &entity : item->originalText().entities) {
+			if (entity.type() == EntityType::CustomEmoji) {
+				const auto data = Data::ParseCustomEmojiData(entity.data());
+				push(data.id);
+			}
+		}
+		break;
+	case EmojiPacksSource::Reactions:
+		for (const auto &reaction : item->reactions()) {
+			if (const auto customId = reaction.id.custom()) {
+				push(customId);
+			}
+		}
+		break;
+	default: Unexpected("Source in CollectEmojiPacks.");
+	}
+	return result;
+}
+
+void AddEmojiPacksAction(
+		not_null<Ui::PopupMenu*> menu,
+		std::vector<StickerSetIdentifier> packIds,
+		EmojiPacksSource source,
+		not_null<Window::SessionController*> controller) {
+	if (packIds.empty()) {
+		return;
+	}
+
+	class Item final : public Ui::Menu::ItemBase {
+	public:
+		Item(
+			not_null<RpWidget*> parent,
+			const style::Menu &st,
+			TextWithEntities &&about)
+		: Ui::Menu::ItemBase(parent, st)
+		, _st(st)
+		, _text(base::make_unique_q<Ui::FlatLabel>(
+			this,
+			rpl::single(std::move(about)),
+			st::historyHasCustomEmoji))
+		, _dummyAction(new QAction(parent)) {
+			enableMouseSelecting();
+			_text->setAttribute(Qt::WA_TransparentForMouseEvents);
+			updateMinWidth();
+			parent->widthValue() | rpl::start_with_next([=](int width) {
+				const auto top = st::historyHasCustomEmojiPosition.y();
+				const auto skip = st::historyHasCustomEmojiPosition.x();
+				_text->resizeToWidth(width - 2 * skip);
+				_text->moveToLeft(skip, top);
+				resize(width, contentHeight());
+			}, lifetime());
+		}
+
+		not_null<QAction*> action() const override {
+			return _dummyAction;
+		}
+
+		bool isEnabled() const override {
+			return true;
+		}
+
+	private:
+		int contentHeight() const override {
+			const auto skip = st::historyHasCustomEmojiPosition.y();
+			return skip + _text->height() + skip;
+		}
+
+		void paintEvent(QPaintEvent *e) override {
+			auto p = QPainter(this);
+			const auto selected = isSelected();
+			p.fillRect(rect(), selected ? _st.itemBgOver : _st.itemBg);
+			RippleButton::paintRipple(p, 0, 0);
+		}
+
+		void updateMinWidth() {
+			const auto skip = st::historyHasCustomEmojiPosition.x();
+			auto min = _text->naturalWidth() / 2;
+			auto max = _text->naturalWidth() - skip;
+			_text->resizeToWidth(max);
+			const auto height = _text->height();
+			_text->resizeToWidth(min);
+			const auto heightMax = _text->height();
+			if (heightMax > height) {
+				while (min + 1 < max) {
+					const auto middle = (max + min) / 2;
+					_text->resizeToWidth(middle);
+					if (_text->height() > height) {
+						min = middle;
+					} else {
+						max = middle;
+					}
+				}
+			}
+			setMinWidth(skip * 2 + max);
+		}
+
+		const style::Menu &_st;
+		const base::unique_qptr<Ui::FlatLabel> _text;
+		const not_null<QAction*> _dummyAction;
+
+	};
+
+	const auto count = int(packIds.size());
+	const auto manager = &controller->session().data().customEmojiManager();
+	const auto name = (count == 1)
+		? TextWithEntities{ manager->lookupSetName(packIds[0].id) }
+		: TextWithEntities();
+	if (!menu->empty()) {
+		menu->addSeparator();
+	}
+	auto text = [&] {
+		switch (source) {
+		case EmojiPacksSource::Message:
+			return name.text.isEmpty()
+				? tr::lng_context_animated_emoji_many(
+					tr::now,
+					lt_count,
+					count,
+					Ui::Text::RichLangValue)
+				: tr::lng_context_animated_emoji(
+					tr::now,
+					lt_name,
+					TextWithEntities{ name },
+					Ui::Text::RichLangValue);
+		case EmojiPacksSource::Reaction:
+			if (!name.text.isEmpty()) {
+				return tr::lng_context_animated_reaction(
+					tr::now,
+					lt_name,
+					TextWithEntities{ name },
+					Ui::Text::RichLangValue);
+			}
+			[[fallthrough]];
+		case EmojiPacksSource::Reactions:
+			return name.text.isEmpty()
+				? tr::lng_context_animated_reactions_many(
+					tr::now,
+					lt_count,
+					count,
+					Ui::Text::RichLangValue)
+				: tr::lng_context_animated_reactions(
+					tr::now,
+					lt_name,
+					TextWithEntities{ name },
+					Ui::Text::RichLangValue);
+		}
+		Unexpected("Source in AddEmojiPacksAction.");
+	}();
+	auto button = base::make_unique_q<Item>(
+		menu->menu(),
+		menu->st().menu,
+		std::move(text));
+	const auto weak = base::make_weak(controller.get());
+	button->setClickedCallback([=] {
+		const auto strong = weak.get();
+		if (!strong) {
+			return;
+		} else if (packIds.size() > 1) {
+			strong->show(Box<StickersBox>(strong, packIds));
+			return;
+		}
+		// Single used emoji pack.
+		strong->show(
+			Box<StickerSetBox>(
+				strong,
+				packIds.front(),
+				Data::StickersType::Emoji),
+			Ui::LayerOption::KeepOther);
+
+	});
+	menu->addAction(std::move(button));
+}
+
+void AddEmojiPacksAction(
+		not_null<Ui::PopupMenu*> menu,
+		not_null<HistoryItem*> item,
+		EmojiPacksSource source,
+		not_null<Window::SessionController*> controller) {
+	AddEmojiPacksAction(
+		menu,
+		CollectEmojiPacks(item, source),
+		source,
+		controller);
 }
 
 } // namespace HistoryView

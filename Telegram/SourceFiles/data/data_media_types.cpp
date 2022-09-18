@@ -9,9 +9,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/history_message.h" // CreateMedia.
 #include "history/history_location_manager.h"
 #include "history/view/history_view_element.h"
 #include "history/view/history_view_item_preview.h"
+#include "history/view/media/history_view_extended_preview.h"
 #include "history/view/media/history_view_photo.h"
 #include "history/view/media/history_view_sticker.h"
 #include "history/view/media/history_view_gif.h"
@@ -26,15 +28,18 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/media/history_view_theme_document.h"
 #include "history/view/media/history_view_slot_machine.h"
 #include "history/view/media/history_view_dice.h"
+#include "history/view/media/history_view_service_media_gift.h"
 #include "dialogs/ui/dialogs_message_view.h"
 #include "ui/image/image.h"
 #include "ui/text/format_song_document_name.h"
 #include "ui/text/format_values.h"
+#include "ui/text/text_entity.h"
 #include "ui/text/text_options.h"
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
 #include "ui/emoji_config.h"
 #include "api/api_sending.h"
+#include "api/api_transcribes.h"
 #include "storage/storage_shared_media.h"
 #include "storage/localstorage.h"
 #include "chat_helpers/stickers_dice_pack.h" // Stickers::DicePacks::IsSlot.
@@ -52,8 +57,11 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "main/main_session.h"
 #include "main/main_session_settings.h"
 #include "core/application.h"
+#include "core/click_handler_types.h" // ClickHandlerContext
 #include "lang/lang_keys.h"
 #include "storage/file_upload.h"
+#include "window/window_session_controller.h" // Window::Show
+#include "apiwrap.h"
 #include "styles/style_chat.h"
 #include "styles/style_dialogs.h"
 
@@ -224,6 +232,49 @@ template <typename MediaType>
 	return (i != end(*existing)) ? *i : ItemPreviewImage();
 }
 
+bool UpdateExtendedMedia(
+		Invoice &invoice,
+		not_null<HistoryMessage*> item,
+		const MTPMessageExtendedMedia &media) {
+	return media.match([&](const MTPDmessageExtendedMediaPreview &data) {
+		if (invoice.extendedMedia) {
+			return false;
+		}
+		auto changed = false;
+		auto &preview = invoice.extendedPreview;
+		if (const auto &w = data.vw()) {
+			const auto &h = data.vh();
+			Assert(h.has_value());
+			const auto dimensions = QSize(w->v, h->v);
+			if (preview.dimensions != dimensions) {
+				preview.dimensions = dimensions;
+				changed = true;
+			}
+		}
+		if (const auto &thumb = data.vthumb()) {
+			if (thumb->type() == mtpc_photoStrippedSize) {
+				const auto bytes = thumb->c_photoStrippedSize().vbytes().v;
+				if (preview.inlineThumbnailBytes != bytes) {
+					preview.inlineThumbnailBytes = bytes;
+					changed = true;
+				}
+			}
+		}
+		if (const auto &duration = data.vvideo_duration()) {
+			if (preview.videoDuration != duration->v) {
+				preview.videoDuration = duration->v;
+				changed = true;
+			}
+		}
+		return changed;
+	}, [&](const MTPDmessageExtendedMedia &data) {
+		invoice.extendedMedia = HistoryMessage::CreateMedia(
+			item,
+			data.vmedia());
+		return true;
+	});
+}
+
 } // namespace
 
 TextForMimeData WithCaptionClipboardText(
@@ -239,14 +290,17 @@ TextForMimeData WithCaptionClipboardText(
 }
 
 Invoice ComputeInvoiceData(
-		not_null<HistoryItem*> item,
+		not_null<HistoryMessage*> item,
 		const MTPDmessageMediaInvoice &data) {
-	return {
+	auto description = qs(data.vdescription());
+	auto result = Invoice{
 		.receiptMsgId = data.vreceipt_msg_id().value_or_empty(),
 		.amount = data.vtotal_amount().v,
 		.currency = qs(data.vcurrency()),
 		.title = TextUtilities::SingleLine(qs(data.vtitle())),
-		.description = qs(data.vdescription()),
+		.description = TextUtilities::ParseEntities(
+			description,
+			TextParseLinks | TextParseMultiline),
 		.photo = (data.vphoto()
 			? item->history()->owner().photoFromWeb(
 				*data.vphoto(),
@@ -254,6 +308,10 @@ Invoice ComputeInvoiceData(
 			: nullptr),
 		.isTest = data.is_test(),
 	};
+	if (const auto &media = data.vextended_media()) {
+		UpdateExtendedMedia(result, item, *media);
+	}
+	return result;
 }
 
 Call ComputeCallData(const MTPDmessageActionPhoneCall &call) {
@@ -635,10 +693,12 @@ std::unique_ptr<HistoryView::Media> MediaPhoto::createView(
 
 MediaFile::MediaFile(
 	not_null<HistoryItem*> parent,
-	not_null<DocumentData*> document)
+	not_null<DocumentData*> document,
+	bool skipPremiumEffect)
 : Media(parent)
 , _document(document)
-, _emoji(document->sticker() ? document->sticker()->alt : QString()) {
+, _emoji(document->sticker() ? document->sticker()->alt : QString())
+, _skipPremiumEffect(skipPremiumEffect) {
 	parent->history()->owner().registerDocumentItem(_document, parent);
 
 	if (!_emoji.isEmpty()) {
@@ -658,7 +718,10 @@ MediaFile::~MediaFile() {
 }
 
 std::unique_ptr<Media> MediaFile::clone(not_null<HistoryItem*> parent) {
-	return std::make_unique<MediaFile>(parent, _document);
+	return std::make_unique<MediaFile>(
+		parent,
+		_document,
+		!_document->session().premium());
 }
 
 DocumentData *MediaFile::document() const {
@@ -851,9 +914,27 @@ TextForMimeData MediaFile::clipboardText() const {
 		}
 		return tr::lng_in_dlg_file(tr::now) + addName;
 	}();
-	return WithCaptionClipboardText(
-		attachType,
-		parent()->clipboardText());
+	auto caption = parent()->clipboardText();
+
+	if (_document->isVoiceMessage()) {
+		const auto &entry = _document->session().api().transcribes().entry(
+			parent());
+		if (!entry.requestId
+			&& entry.shown
+			&& !entry.toolong
+			&& !entry.failed
+			&& (entry.pending || !entry.result.isEmpty())) {
+			const auto text = "{{\n"
+				+ entry.result
+				+ (entry.result.isEmpty() ? "" : " ")
+				+ (entry.pending ? "[...]" : "")
+				+ "\n}}"
+				+ (caption.rich.text.isEmpty() ? "" : "\n");
+			caption = TextForMimeData{ text, { text } }.append(std::move(caption));
+		}
+	}
+
+	return WithCaptionClipboardText(attachType, std::move(caption));
 }
 
 bool MediaFile::allowsEditCaption() const {
@@ -890,6 +971,11 @@ QString MediaFile::errorTextForForward(not_null<PeerData*> peer) const {
 					ChatRestriction::SendMedia)) {
 				return *error;
 			}
+			if (const auto error = Data::RestrictionError(
+					peer,
+					UserRestriction::SendVideoMessages)) {
+				return *error;
+			}
 		} else {
 			if (const auto error = Data::RestrictionError(
 					peer,
@@ -901,6 +987,12 @@ QString MediaFile::errorTextForForward(not_null<PeerData*> peer) const {
 			peer,
 			ChatRestriction::SendMedia)) {
 		return *error;
+	} else if (_document->isVoiceMessage()) {
+		if (const auto error = Data::RestrictionError(
+				peer,
+				UserRestriction::SendVoiceMessages)) {
+			return *error;
+		}
 	}
 	return QString();
 }
@@ -947,16 +1039,15 @@ std::unique_ptr<HistoryView::Media> MediaFile::createView(
 		not_null<HistoryView::Element*> message,
 		not_null<HistoryItem*> realParent,
 		HistoryView::Element *replacing) {
-	if (const auto info = _document->sticker(); info && !info->isWebm()) {
+	if (_document->sticker()) {
 		return std::make_unique<HistoryView::UnwrappedMedia>(
 			message,
 			std::make_unique<HistoryView::Sticker>(
 				message,
 				_document,
+				_skipPremiumEffect,
 				replacing));
-	} else if (_document->isAnimation()
-		|| _document->isVideoFile()
-		|| (info && info->isWebm())) {
+	} else if (_document->isAnimation() || _document->isVideoFile()) {
 		return std::make_unique<HistoryView::Gif>(
 			message,
 			realParent,
@@ -1437,7 +1528,19 @@ MediaInvoice::MediaInvoice(
 	not_null<HistoryItem*> parent,
 	const Invoice &data)
 : Media(parent)
-, _invoice(data) {
+, _invoice{
+	.receiptMsgId = data.receiptMsgId,
+	.amount = data.amount,
+	.currency = data.currency,
+	.title = data.title,
+	.description = data.description,
+	.extendedPreview = data.extendedPreview,
+	.extendedMedia = (data.extendedMedia
+		? data.extendedMedia->clone(parent)
+		: nullptr),
+	.photo = data.photo,
+	.isTest = data.isTest,
+} {
 }
 
 std::unique_ptr<Media> MediaInvoice::clone(not_null<HistoryItem*> parent) {
@@ -1491,10 +1594,28 @@ bool MediaInvoice::updateSentMedia(const MTPMessageMedia &media) {
 	return true;
 }
 
+bool MediaInvoice::updateExtendedMedia(
+		not_null<HistoryMessage*> item,
+		const MTPMessageExtendedMedia &media) {
+	Expects(item == parent());
+
+	return UpdateExtendedMedia(_invoice, item, media);
+}
+
 std::unique_ptr<HistoryView::Media> MediaInvoice::createView(
 		not_null<HistoryView::Element*> message,
 		not_null<HistoryItem*> realParent,
 		HistoryView::Element *replacing) {
+	if (_invoice.extendedMedia) {
+		return _invoice.extendedMedia->createView(
+			message,
+			realParent,
+			replacing);
+	} else if (_invoice.extendedPreview) {
+		return std::make_unique<HistoryView::ExtendedPreview>(
+			message,
+			&_invoice);
+	}
 	return std::make_unique<HistoryView::Invoice>(message, &_invoice);
 }
 
@@ -1640,6 +1761,7 @@ ClickHandlerPtr MediaDice::makeHandler() const {
 ClickHandlerPtr MediaDice::MakeHandler(
 		not_null<History*> history,
 		const QString &emoji) {
+	// TODO support multi-windows.
 	static auto ShownToast = base::weak_ptr<Ui::Toast::Instance>();
 	static const auto HideExisting = [] {
 		if (const auto toast = ShownToast.get()) {
@@ -1647,7 +1769,7 @@ ClickHandlerPtr MediaDice::MakeHandler(
 			ShownToast = nullptr;
 		}
 	};
-	return std::make_shared<LambdaClickHandler>([=] {
+	return std::make_shared<LambdaClickHandler>([=](ClickContext context) {
 		auto config = Ui::Toast::Config{
 			.text = { tr::lng_about_random(tr::now, lt_emoji, emoji) },
 			.st = &st::historyDiceToast,
@@ -1677,8 +1799,80 @@ ClickHandlerPtr MediaDice::MakeHandler(
 		}
 
 		HideExisting();
-		ShownToast = Ui::Toast::Show(config);
+		const auto my = context.other.value<ClickHandlerContext>();
+		const auto weak = my.sessionWindow;
+		if (const auto strong = weak.get()) {
+			ShownToast = Ui::Toast::Show(
+				Window::Show(strong).toastParent(),
+				config);
+		} else {
+			ShownToast = Ui::Toast::Show(config);
+		}
 	});
+}
+
+MediaGiftBox::MediaGiftBox(
+	not_null<HistoryItem*> parent,
+	not_null<PeerData*> from,
+	int months)
+: Media(parent)
+, _from(from)
+, _months(months) {
+}
+
+std::unique_ptr<Media> MediaGiftBox::clone(not_null<HistoryItem*> parent) {
+	return std::make_unique<MediaGiftBox>(parent, _from, _months);
+}
+
+not_null<PeerData*> MediaGiftBox::from() const {
+	return _from;
+}
+
+int MediaGiftBox::months() const {
+	return _months;
+}
+
+bool MediaGiftBox::allowsRevoke(TimeId now) const {
+	return false;
+}
+
+TextWithEntities MediaGiftBox::notificationText() const {
+	return {};
+}
+
+QString MediaGiftBox::pinnedTextSubstring() const {
+	return {};
+}
+
+TextForMimeData MediaGiftBox::clipboardText() const {
+	return {};
+}
+
+bool MediaGiftBox::forceForwardedInfo() const {
+	return false;
+}
+
+bool MediaGiftBox::updateInlineResultMedia(const MTPMessageMedia &media) {
+	return false;
+}
+
+bool MediaGiftBox::updateSentMedia(const MTPMessageMedia &media) {
+	return false;
+}
+
+std::unique_ptr<HistoryView::Media> MediaGiftBox::createView(
+		not_null<HistoryView::Element*> message,
+		not_null<HistoryItem*> realParent,
+		HistoryView::Element *replacing) {
+	return std::make_unique<HistoryView::MediaGift>(message, this);
+}
+
+bool MediaGiftBox::activated() const {
+	return _activated;
+}
+
+void MediaGiftBox::setActivated(bool activated) {
+	_activated = activated;
 }
 
 } // namespace Data

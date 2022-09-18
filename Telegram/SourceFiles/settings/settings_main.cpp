@@ -16,6 +16,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "settings/settings_advanced.h"
 #include "settings/settings_folders.h"
 #include "settings/settings_calls.h"
+#include "settings/settings_premium.h"
 #include "boxes/language_box.h"
 #include "boxes/username_box.h"
 #include "ui/boxes/confirm_box.h"
@@ -29,11 +30,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/toast/toast.h"
 #include "ui/special_buttons.h"
-#include "info/profile/info_profile_cover.h"
+#include "info/profile/info_profile_badge.h"
+#include "info/profile/info_profile_emoji_status_panel.h"
 #include "data/data_user.h"
 #include "data/data_session.h"
 #include "data/data_cloud_themes.h"
 #include "data/data_chat_filters.h"
+#include "data/data_peer_values.h" // Data::AmPremiumValue
 #include "lang/lang_keys.h"
 #include "lang/lang_instance.h"
 #include "storage/localstorage.h"
@@ -46,6 +49,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "api/api_cloud_password.h"
 #include "api/api_global_privacy.h"
 #include "api/api_sensitive_content.h"
+#include "api/api_premium.h"
 #include "info/profile/info_profile_values.h"
 #include "window/window_controller.h"
 #include "window/window_session_controller.h"
@@ -82,6 +86,8 @@ private:
 
 	const not_null<Window::SessionController*> _controller;
 	const not_null<UserData*> _user;
+	Info::Profile::EmojiStatusPanel _emojiStatusPanel;
+	Info::Profile::Badge _badge;
 
 	object_ptr<Ui::UserpicButton> _userpic;
 	object_ptr<Ui::FlatLabel> _name = { nullptr };
@@ -101,6 +107,17 @@ Cover::Cover(
 		+ st::settingsPhotoBottom)
 , _controller(controller)
 , _user(user)
+, _badge(
+	this,
+	st::infoPeerBadge,
+	user,
+	&_emojiStatusPanel,
+	[=] {
+		return controller->isGifPausedAtLeastFor(
+			Window::GifPauseReason::Layer);
+	},
+	0, // customStatusLoopsLimit
+	Info::Profile::BadgeType::Premium)
 , _userpic(
 	this,
 	controller,
@@ -115,6 +132,9 @@ Cover::Cover(
 	_name->setSelectable(true);
 	_name->setContextCopyText(tr::lng_profile_copy_fullname(tr::now));
 
+	_phone->setSelectable(true);
+	_phone->setContextCopyText(tr::lng_profile_copy_phone(tr::now));
+
 	initViewers();
 	setupChildGeometry();
 
@@ -125,6 +145,16 @@ Cover::Cover(
 			_user,
 			_userpic->takeResultImage());
 	}, _userpic->lifetime());
+
+	_badge.setPremiumClickCallback([=] {
+		_emojiStatusPanel.show(
+			_controller,
+			_badge.widget(),
+			_badge.sizeTag());
+	});
+	_badge.updated() | rpl::start_with_next([=] {
+		refreshNameGeometry(width());
+	}, _name->lifetime());
 }
 
 Cover::~Cover() = default;
@@ -167,25 +197,35 @@ void Cover::initViewers() {
 		refreshUsernameGeometry(width());
 	}, lifetime());
 
-	_username->setClickHandlerFilter([=](auto&&...) {
+	_username->overrideLinkClickHandler([=] {
 		const auto username = _user->userName();
 		if (username.isEmpty()) {
 			_controller->show(Box<UsernameBox>(&_user->session()));
 		} else {
 			QGuiApplication::clipboard()->setText(
 				_user->session().createInternalLinkFull(username));
-			Ui::Toast::Show(tr::lng_username_copied(tr::now));
+			Ui::Toast::Show(
+				Window::Show(_controller).toastParent(),
+				tr::lng_username_copied(tr::now));
 		}
-		return false;
 	});
 }
 
 void Cover::refreshNameGeometry(int newWidth) {
 	const auto nameLeft = st::settingsNameLeft;
 	const auto nameTop = st::settingsNameTop;
-	const auto nameWidth = newWidth - nameLeft - st::infoProfileNameRight;
+	auto nameWidth = newWidth
+		- nameLeft
+		- st::infoProfileNameRight;
+	if (const auto width = _badge.widget() ? _badge.widget()->width() : 0) {
+		nameWidth -= st::infoVerifiedCheckPosition.x() + width;
+	}
 	_name->resizeToNaturalWidth(nameWidth);
 	_name->moveToLeft(nameLeft, nameTop, newWidth);
+	const auto badgeLeft = nameLeft + _name->width();
+	const auto badgeTop = nameTop;
+	const auto badgeBottom = nameTop + _name->height();
+	_badge.move(badgeLeft, badgeTop, badgeBottom);
 }
 
 void Cover::refreshPhoneGeometry(int newWidth) {
@@ -247,7 +287,12 @@ void SetupSections(
 			std::move(label),
 			st::settingsButton,
 			std::move(descriptor)
-		)->addClickHandler([=] { showOther(type); });
+		)->addClickHandler([=] {
+			if (type == PremiumId()) {
+				controller->setPremiumRef("settings");
+			}
+			showOther(type);
+		});
 	};
 	if (controller->session().supportMode()) {
 		SetupSupport(controller, container);
@@ -286,7 +331,7 @@ void SetupSections(
 				st::settingsButton,
 				{ &st::settingsIconFolders, kIconDarkBlue }))
 	)->setDuration(0);
-	if (!controller->session().data().chatsFilters().list().empty()
+	if (controller->session().data().chatsFilters().has()
 		|| controller->session().settings().dialogsFiltersEnabled()) {
 		slided->show(anim::type::instant);
 		preload();
@@ -327,6 +372,27 @@ void SetupSections(
 
 	SetupLanguageButton(container);
 
+	if (controller->session().premiumPossible()) {
+		AddSkip(container);
+		AddDivider(container);
+		AddSkip(container);
+
+		const auto icon = &st::settingsPremiumIconStar;
+		auto gradient = QLinearGradient(
+			0,
+			icon->height(),
+			icon->width() + icon->width() / 3,
+			0 - icon->height() / 3);
+		gradient.setStops(QGradientStops{
+			{ 0.0, st::premiumButtonBg1->c },
+			{ 1.0, st::premiumButtonBg3->c },
+		});
+		addSection(
+			tr::lng_premium_summary_title(),
+			PremiumId(),
+			{ .icon = icon, .backgroundBrush = QBrush(gradient) });
+	}
+
 	AddSkip(container);
 }
 
@@ -350,7 +416,7 @@ void SetupInterfaceScale(
 		container,
 		tr::lng_settings_default_scale(),
 		icon ? st::settingsButton : st::settingsButtonNoIcon,
-		{ icon ? &st::settingsIconInterfaceScale : nullptr, kIconLightBlue }
+		{ icon ? &st::settingsIconInterfaceScale : nullptr, kIconLightOrange }
 	)->toggleOn(toggled->events_starting_with_copy(switched));
 
 	const auto slider = container->add(
@@ -528,6 +594,7 @@ Main::Main(
 : Section(parent)
 , _controller(controller) {
 	setupContent(controller);
+	_controller->session().api().premium().reload();
 }
 
 rpl::producer<QString> Main::title() {

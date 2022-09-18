@@ -66,7 +66,9 @@ void ShowPeerInfoSync(not_null<PeerData*> peer) {
 	// we can safely use activeWindow.
 	if (const auto window = Core::App().activeWindow()) {
 		if (const auto controller = window->sessionController()) {
-			controller->showPeerInfo(peer);
+			if (&controller->session() == &peer->session()) {
+				controller->showPeerInfo(peer);
+			}
 		}
 	}
 }
@@ -807,7 +809,7 @@ void Controller::processRequest(
 					: tr::lng_group_requests_was_added)(
 						tr::now,
 						lt_user,
-						Ui::Text::Bold(user->name),
+						Ui::Text::Bold(user->name()),
 						Ui::Text::WithEntities)
 			});
 		}
@@ -1162,7 +1164,7 @@ object_ptr<Ui::BoxContent> ShareInviteLinkBox(
 			auto text = TextWithEntities();
 			if (result.size() > 1) {
 				text.append(
-					Ui::Text::Bold(error.second->name)
+					Ui::Text::Bold(error.second->name())
 				).append("\n\n");
 			}
 			text.append(error.first);

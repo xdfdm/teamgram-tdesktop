@@ -220,7 +220,8 @@ QByteArray JoinList(
 
 QByteArray FormatText(
 		const std::vector<Data::TextPart> &data,
-		const QString &internalLinksDomain) {
+		const QString &internalLinksDomain,
+		const QString &relativeLinkBase) {
 	return JoinList(QByteArray(), ranges::views::all(
 		data
 	) | ranges::views::transform([&](const Data::TextPart &part) {
@@ -274,6 +275,15 @@ QByteArray FormatText(
 			"onclick=\"ShowSpoiler(this)\">"
 			"<span aria-hidden=\"true\">"
 			+ text + "</span></span>";
+		case Type::CustomEmoji: return (part.additional.isEmpty()
+			? "<a href=\"\" onclick=\"return ShowNotLoadedEmoji();\">"
+			: (part.additional == Data::TextPart::UnavailableEmoji())
+			? "<a href=\"\" onclick=\"return ShowNotAvailableEmoji();\">"
+			: ("<a href = \""
+				+ (relativeLinkBase + part.additional).toUtf8()
+				+ "\">"))
+			+ text
+			+ "</a>";
 		}
 		Unexpected("Type in text entities serialization.");
 	}) | ranges::to_vector);
@@ -1001,10 +1011,18 @@ auto HtmlWriter::Wrap::pushMessage(
 			+ " in "
 			+ wrapReplyToLink("this game");
 	}, [&](const ActionPaymentSent &data) {
-		return "You have successfully transferred "
-			+ FormatMoneyAmount(data.amount, data.currency)
+		const auto amount = FormatMoneyAmount(data.amount, data.currency);
+		if (data.recurringUsed) {
+			return "You were charged " + amount + " via recurring payment";
+		}
+		auto result =  "You have successfully transferred "
+			+ amount
 			+ " for "
 			+ wrapReplyToLink("this invoice");
+		if (data.recurringInit) {
+			result += " and allowed future recurring payments";
+		}
+		return result;
 	}, [&](const ActionPhoneCall &data) {
 		return QByteArray();
 	}, [&](const ActionScreenshotTaken &data) {
@@ -1117,6 +1135,15 @@ auto HtmlWriter::Wrap::pushMessage(
 		return "You have just successfully transferred data from the &laquo;"
 			+ SerializeString(data.text)
 			+ "&raquo; button to the bot";
+	}, [&](const ActionGiftPremium &data) {
+		if (!data.months || data.cost.isEmpty()) {
+			return (serviceFrom + " sent you a gift.");
+		}
+		return (serviceFrom
+			+ " sent you a gift for "
+			+ data.cost
+			+ ": Telegram Premium for "
+			+ QString::number(data.months).toUtf8() + " months.");
 	}, [](v::null_t) { return QByteArray(); });
 
 	if (!serviceText.isEmpty()) {
@@ -1185,7 +1212,7 @@ auto HtmlWriter::Wrap::pushMessage(
 	block.append(pushDiv("body"));
 	block.append(pushTag("div", {
 		{ "class", "pull_right date details" },
-		{ "title", FormatDateTime(message.date) },
+		{ "title", FormatDateTime(message.date, true) },
 	}));
 	block.append(FormatTimeText(message.date));
 	block.append(popTag());
@@ -1215,7 +1242,8 @@ auto HtmlWriter::Wrap::pushMessage(
 				block.append(" via @" + via);
 			}
 			block.append(pushTag("span", {
-				{ "class", "details" },
+				{ "class", "date details" },
+				{ "title", FormatDateTime(message.forwardedDate, true) },
 				{ "inline", "" }
 			}));
 			block.append(' ' + FormatDateTime(message.forwardedDate));
@@ -1236,7 +1264,7 @@ auto HtmlWriter::Wrap::pushMessage(
 
 	block.append(pushMedia(message, basePath, peers, internalLinksDomain));
 
-	const auto text = FormatText(message.text, internalLinksDomain);
+	const auto text = FormatText(message.text, internalLinksDomain, _base);
 	if (!text.isEmpty()) {
 		block.append(pushDiv("text"));
 		block.append(text);

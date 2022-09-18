@@ -115,7 +115,9 @@ void Preload(
 				: Data::FileOriginUserPhoto(peerToUser(peer->id), photo->id);
 			state->photoPreloads.push_back(photo->createMediaView());
 			if (photo->hasVideo()) {
-				state->photoPreloads.back()->videoWanted(origin);
+				state->photoPreloads.back()->videoWanted(
+					Data::PhotoSize::Large,
+					origin);
 			} else {
 				state->photoPreloads.back()->wanted(
 					Data::PhotoSize::Large,
@@ -207,7 +209,7 @@ void ProcessFullPhoto(
 		const auto user = peer->asUser();
 		const auto username = peer->userName();
 		return PeerShortInfoFields{
-			.name = peer->name,
+			.name = peer->name(),
 			.phone = user ? Ui::FormatPhone(user->phone()) : QString(),
 			.link = ((user || username.isEmpty())
 				? QString()

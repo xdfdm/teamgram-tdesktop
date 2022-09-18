@@ -48,6 +48,7 @@ class Element;
 class TopBarWidget;
 class ScheduledMemento;
 class ComposeControls;
+class StickerToast;
 
 class ScheduledWidget final
 	: public Window::SectionWidget
@@ -74,6 +75,10 @@ public:
 		not_null<Window::SectionMemento*> memento,
 		const Window::SectionShow &params) override;
 	std::shared_ptr<Window::SectionMemento> createMemento() override;
+	bool showMessage(
+		PeerId peerId,
+		const Window::SectionShow &params,
+		MsgId messageId) override;
 
 	Window::SectionActionResult sendBotCommand(
 		Bot::SendCommandRequest request) override;
@@ -123,7 +128,8 @@ public:
 	CopyRestrictionType listCopyRestrictionType(HistoryItem *item) override;
 	CopyRestrictionType listSelectRestrictionType() override;
 	auto listAllowedReactionsValue()
-		-> rpl::producer<std::optional<base::flat_set<QString>>> override;
+		-> rpl::producer<Data::AllowedReactions> override;
+	void listShowPremiumToast(not_null<DocumentData*> document) override;
 
 protected:
 	void resizeEvent(QResizeEvent *e) override;
@@ -141,8 +147,12 @@ private:
 	void updateAdaptiveLayout();
 	void saveState(not_null<ScheduledMemento*> memento);
 	void restoreState(not_null<ScheduledMemento*> memento);
-	void showAtPosition(Data::MessagePosition position);
-	bool showAtPositionNow(Data::MessagePosition position);
+	void showAtPosition(
+		Data::MessagePosition position,
+		HistoryItem *originItem = nullptr);
+	bool showAtPositionNow(
+		Data::MessagePosition position,
+		HistoryItem *originItem);
 
 	void setupComposeControls();
 
@@ -153,6 +163,7 @@ private:
 	void scrollDownAnimationFinish();
 	void updateScrollDownVisibility();
 	void updateScrollDownPosition();
+	void showAtEnd();
 
 	void confirmSendNowSelected();
 	void confirmDeleteSelected();
@@ -175,6 +186,11 @@ private:
 	void highlightSingleNewMessage(const Data::MessagesSlice &slice);
 	void chooseAttach();
 	[[nodiscard]] SendMenu::Type sendMenuType() const;
+
+	void pushReplyReturn(not_null<HistoryItem*> item);
+	void computeCurrentReplyReturn();
+	void calculateNextReplyReturn();
+	void checkReplyReturns();
 
 	void uploadFile(const QByteArray &fileContent, SendMediaType type);
 	bool confirmSendingFiles(
@@ -221,6 +237,11 @@ private:
 	object_ptr<Ui::PlainShadow> _topBarShadow;
 	std::unique_ptr<ComposeControls> _composeControls;
 	bool _skipScrollEvent = false;
+
+	std::unique_ptr<HistoryView::StickerToast> _stickerToast;
+
+	std::vector<MsgId> _replyReturns;
+	HistoryItem *_replyReturn = nullptr;
 
 	FullMsgId _highlightMessageId;
 	std::optional<Data::MessagePosition> _nextAnimatedScrollPosition;

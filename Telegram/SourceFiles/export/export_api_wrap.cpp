@@ -28,8 +28,9 @@ constexpr auto kFileRequestsCount = 2;
 constexpr auto kChatsSliceLimit = 100;
 constexpr auto kMessagesSliceLimit = 100;
 constexpr auto kTopPeerSliceLimit = 100;
-constexpr auto kFileMaxSize = 2000 * 1024 * 1024;
+constexpr auto kFileMaxSize = 4000 * int64(1024 * 1024);
 constexpr auto kLocationCacheSize = 100'000;
+constexpr auto kMaxEmojiPerRequest = 100;
 
 struct LocationKey {
 	uint64 type;
@@ -156,11 +157,11 @@ struct ApiWrap::FileProcess {
 	uint64 randomId = 0;
 	Data::FileLocation location;
 	Data::FileOrigin origin;
-	int offset = 0;
-	int size = 0;
+	int64 offset = 0;
+	int64 size = 0;
 
 	struct Request {
-		int offset = 0;
+		int64 offset = 0;
 		QByteArray bytes;
 	};
 	std::deque<Request> requests;
@@ -168,8 +169,8 @@ struct ApiWrap::FileProcess {
 };
 
 struct ApiWrap::FileProgress {
-	int ready = 0;
-	int total = 0;
+	int64 ready = 0;
+	int64 total = 0;
 };
 
 struct ApiWrap::ChatsProcess {
@@ -352,7 +353,7 @@ auto ApiWrap::splitRequest(int index, Request &&request) {
 		std::forward<Request>(request)));
 }
 
-auto ApiWrap::fileRequest(const Data::FileLocation &location, int offset) {
+auto ApiWrap::fileRequest(const Data::FileLocation &location, int64 offset) {
 	Expects(location.dcId != 0
 		|| location.data.type() == mtpc_inputTakeoutFileLocation);
 	Expects(_takeoutId.has_value());
@@ -363,7 +364,7 @@ auto ApiWrap::fileRequest(const Data::FileLocation &location, int offset) {
 		MTPupload_GetFile(
 			MTP_flags(0),
 			location.data,
-			MTP_int(offset),
+			MTP_long(offset),
 			MTP_int(kFileChunkSize))
 	)).fail([=](const MTP::Error &result) {
 		_fileProcess->requestId = 0;
@@ -656,7 +657,7 @@ void ApiWrap::startMainSession(FnMut<void()> done) {
 		}
 		_mtp.request(MTPaccount_InitTakeoutSession(
 			MTP_flags(flags),
-			MTP_int(sizeLimit)
+			MTP_long(sizeLimit)
 		)).done([=, done = std::move(done)](
 				const MTPaccount_Takeout &result) mutable {
 			_takeoutId = result.match([](const MTPDaccount_takeout &data) {
@@ -1468,13 +1469,79 @@ void ApiWrap::loadMessagesFiles(Data::MessagesSlice &&slice) {
 	Expects(_chatProcess != nullptr);
 	Expects(!_chatProcess->slice.has_value());
 
+	collectMessagesCustomEmoji(slice);
+
 	if (slice.list.empty()) {
 		_chatProcess->lastSlice = true;
 	}
 	_chatProcess->slice = std::move(slice);
 	_chatProcess->fileIndex = 0;
 
-	loadNextMessageFile();
+	resolveCustomEmoji();
+}
+
+void ApiWrap::collectMessagesCustomEmoji(const Data::MessagesSlice &slice) {
+	for (const auto &message : slice.list) {
+		for (const auto &part : message.text) {
+			if (part.type == Data::TextPart::Type::CustomEmoji) {
+				if (const auto id = part.additional.toULongLong()) {
+					if (!_resolvedCustomEmoji.contains(id)) {
+						_unresolvedCustomEmoji.emplace(id);
+					}
+				}
+			}
+		}
+	}
+}
+
+void ApiWrap::resolveCustomEmoji() {
+	if (_unresolvedCustomEmoji.empty()) {
+		loadNextMessageFile();
+		return;
+	}
+	const auto count = std::min(
+		int(_unresolvedCustomEmoji.size()),
+		kMaxEmojiPerRequest);
+	auto v = QVector<MTPlong>();
+	v.reserve(count);
+	const auto till = end(_unresolvedCustomEmoji);
+	const auto from = end(_unresolvedCustomEmoji) - count;
+	for (auto i = from; i != till; ++i) {
+		v.push_back(MTP_long(*i));
+	}
+	_unresolvedCustomEmoji.erase(from, till);
+	const auto finalize = [=] {
+		for (const auto &id : v) {
+			if (_resolvedCustomEmoji.contains(id.v)) {
+				continue;
+			}
+			_resolvedCustomEmoji.emplace(
+				id.v,
+				Data::Document{
+					.file = {
+						.skipReason = Data::File::SkipReason::Unavailable,
+					},
+				});
+		}
+		resolveCustomEmoji();
+	};
+	mainRequest(MTPmessages_GetCustomEmojiDocuments(
+		MTP_vector<MTPlong>(v)
+	)).fail([=](const MTP::Error &error) {
+		LOG(("Export Error: Failed to get documents for emoji."));
+		finalize();
+		return true;
+	}).done([=](const MTPVector<MTPDocument> &result) {
+		for (const auto &entry : result.v) {
+			auto document = Data::ParseDocument(
+				_chatProcess->context,
+				entry,
+				_chatProcess->info.relativePath,
+				TimeId());
+			_resolvedCustomEmoji.emplace(document.id, std::move(document));
+		}
+		finalize();
+	}).send();
 }
 
 Data::Message *ApiWrap::currentFileMessage() const {
@@ -1501,6 +1568,44 @@ Data::FileOrigin ApiWrap::currentFileMessageOrigin() const {
 	return result;
 }
 
+bool ApiWrap::messageCustomEmojiReady(Data::Message &message) {
+	for (auto &part : message.text) {
+		if (part.type == Data::TextPart::Type::CustomEmoji) {
+			if (const auto id = part.additional.toULongLong()) {
+				const auto i = _resolvedCustomEmoji.find(id);
+				if (i == end(_resolvedCustomEmoji)) {
+					part.additional = Data::TextPart::UnavailableEmoji();
+				} else {
+					auto &file = i->second.file;
+					const auto fileProgress = [=](FileProgress value) {
+						return loadMessageEmojiProgress(value);
+					};
+					const auto ready = processFileLoad(
+						file,
+						{ .customEmojiId = id },
+						fileProgress,
+						[=](const QString &path) {
+							loadMessageEmojiDone(id, path);
+						});
+					if (!ready) {
+						return false;
+					}
+					using SkipReason = Data::File::SkipReason;
+					if (file.skipReason == SkipReason::Unavailable) {
+						part.additional = Data::TextPart::UnavailableEmoji();
+					} else if (file.skipReason == SkipReason::FileType
+						|| file.skipReason == SkipReason::FileSize) {
+						part.additional = QByteArray();
+					} else {
+						part.additional = file.relativePath.toUtf8();
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
 void ApiWrap::loadNextMessageFile() {
 	Expects(_chatProcess != nullptr);
 	Expects(_chatProcess->slice.has_value());
@@ -1508,9 +1613,12 @@ void ApiWrap::loadNextMessageFile() {
 	for (auto &list = _chatProcess->slice->list
 		; _chatProcess->fileIndex < list.size()
 		; ++_chatProcess->fileIndex) {
-		const auto &message = list[_chatProcess->fileIndex];
+		auto &message = list[_chatProcess->fileIndex];
 		if (Data::SkipMessageByDate(message, *_settings)) {
 			continue;
+		}
+		if (!messageCustomEmojiReady(message)) {
+			return;
 		}
 		const auto fileProgress = [=](FileProgress value) {
 			return loadMessageFileProgress(value);
@@ -1614,6 +1722,21 @@ void ApiWrap::loadMessageThumbDone(const QString &relativePath) {
 	file.relativePath = relativePath;
 	if (relativePath.isEmpty()) {
 		file.skipReason = Data::File::SkipReason::Unavailable;
+	}
+	loadNextMessageFile();
+}
+
+bool ApiWrap::loadMessageEmojiProgress(FileProgress progress) {
+	return loadMessageFileProgress(progress);
+}
+
+void ApiWrap::loadMessageEmojiDone(uint64 id, const QString &relativePath) {
+	const auto i = _resolvedCustomEmoji.find(id);
+	if (i != end(_resolvedCustomEmoji)) {
+		i->second.file.relativePath = relativePath;
+		if (relativePath.isEmpty()) {
+			i->second.file.skipReason = Data::File::SkipReason::Unavailable;
+		}
 	}
 	loadNextMessageFile();
 }
@@ -1785,7 +1908,7 @@ void ApiWrap::loadFilePart() {
 	}
 }
 
-void ApiWrap::filePartDone(int offset, const MTPupload_File &result) {
+void ApiWrap::filePartDone(int64 offset, const MTPupload_File &result) {
 	Expects(_fileProcess != nullptr);
 	Expects(!_fileProcess->requests.empty());
 
@@ -1845,7 +1968,7 @@ void ApiWrap::filePartDone(int offset, const MTPupload_File &result) {
 	process->done(process->relativePath);
 }
 
-void ApiWrap::filePartRefreshReference(int offset) {
+void ApiWrap::filePartRefreshReference(int64 offset) {
 	Expects(_fileProcess != nullptr);
 	Expects(_fileProcess->requestId == 0);
 
@@ -1897,7 +2020,7 @@ void ApiWrap::filePartRefreshReference(int offset) {
 }
 
 void ApiWrap::filePartExtractReference(
-		int offset,
+		int64 offset,
 		const MTPmessages_Messages &result) {
 	Expects(_fileProcess != nullptr);
 	Expects(_fileProcess->requestId == 0);

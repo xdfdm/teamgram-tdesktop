@@ -25,6 +25,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/file_utilities.h"
 #include "core/mime_type.h"
 #include "base/event_filter.h"
+#include "boxes/premium_limits_box.h"
+#include "boxes/premium_preview_box.h"
+#include "ui/boxes/confirm_box.h"
 #include "ui/effects/animations.h"
 #include "ui/effects/scroll_content_shadow.h"
 #include "ui/widgets/checkbox.h"
@@ -44,6 +47,10 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/controls/emoji_button.h"
 #include "lottie/lottie_single_player.h"
 #include "data/data_document.h"
+#include "data/data_user.h"
+#include "data/data_premium_limits.h"
+#include "data/stickers/data_stickers.h"
+#include "data/stickers/data_custom_emoji.h"
 #include "media/clip/media_clip_reader.h"
 #include "api/api_common.h"
 #include "window/window_session_controller.h"
@@ -59,6 +66,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 
 namespace {
 
+constexpr auto kMaxMessageLength = 4096;
+
 using Ui::SendFilesWay;
 
 inline bool CanAddUrls(const QList<QUrl> &urls) {
@@ -68,16 +77,19 @@ inline bool CanAddUrls(const QList<QUrl> &urls) {
 void FileDialogCallback(
 		FileDialog::OpenResult &&result,
 		Fn<bool(const Ui::PreparedList&)> checkResult,
-		Fn<void(Ui::PreparedList)> callback) {
-	auto showError = [](tr::phrase<> text) {
-		Ui::Toast::Show(text(tr::now));
+		Fn<void(Ui::PreparedList)> callback,
+		bool premium,
+		not_null<QWidget*> toastParent) {
+	auto showError = [=](tr::phrase<> text) {
+		Ui::Toast::Show(toastParent, text(tr::now));
 	};
 
 	auto list = Storage::PreparedFileFromFilesDialog(
 		std::move(result),
 		checkResult,
 		showError,
-		st::sendMediaPreviewSize);
+		st::sendMediaPreviewSize,
+		premium);
 
 	if (!list) {
 		return;
@@ -240,21 +252,18 @@ SendFilesBox::SendFilesBox(
 	not_null<Window::SessionController*> controller,
 	Ui::PreparedList &&list,
 	const TextWithTags &caption,
-	SendLimit limit,
+	not_null<PeerData*> peer,
 	Api::SendType sendType,
 	SendMenu::Type sendMenuType)
 : _controller(controller)
 , _sendType(sendType)
 , _titleHeight(st::boxTitleHeight)
 , _list(std::move(list))
-, _sendLimit(limit)
+, _sendLimit(peer->slowmodeApplied() ? SendLimit::One : SendLimit::Many)
 , _sendMenuType(sendMenuType)
-, _caption(
-	this,
-	st::confirmCaptionArea,
-	Ui::InputField::Mode::MultiLine,
-	nullptr,
-	caption)
+, _allowEmojiWithoutPremium(Data::AllowEmojiWithoutPremium(peer))
+, _caption(this, st::confirmCaptionArea, Ui::InputField::Mode::MultiLine)
+, _prefilledCaptionText(std::move(caption))
 , _scroll(this, st::boxScroll)
 , _inner(
 	_scroll->setOwnedWidget(
@@ -387,20 +396,24 @@ void SendFilesBox::refreshAllAfterChanges(int fromItem) {
 }
 
 void SendFilesBox::openDialogToAddFileToAlbum() {
+	const auto toastParent = Ui::BoxShow(this).toastParent();
 	const auto checkResult = [=](const Ui::PreparedList &list) {
 		if (_sendLimit != SendLimit::One) {
 			return true;
 		} else if (!_list.canBeSentInSlowmodeWith(list)) {
-			Ui::Toast::Show(tr::lng_slowmode_no_many(tr::now));
+			Ui::Toast::Show(toastParent, tr::lng_slowmode_no_many(tr::now));
 			return false;
 		}
 		return true;
 	};
 	const auto callback = [=](FileDialog::OpenResult &&result) {
+		const auto premium = _controller->session().premium();
 		FileDialogCallback(
 			std::move(result),
 			checkResult,
-			[=](Ui::PreparedList list) { addFiles(std::move(list)); });
+			[=](Ui::PreparedList list) { addFiles(std::move(list)); },
+			premium,
+			toastParent);
 	};
 
 	FileDialog::GetOpenPaths(
@@ -540,6 +553,7 @@ void SendFilesBox::pushBlock(int from, int till) {
 		});
 	}, widget->lifetime());
 
+	const auto toastParent = Ui::BoxShow(this).toastParent();
 	block.itemReplaceRequest(
 	) | rpl::start_with_next([=](int index) {
 		const auto replace = [=](Ui::PreparedList list) {
@@ -560,16 +574,21 @@ void SendFilesBox::pushBlock(int from, int till) {
 			_list.files.push_back(std::move(removing));
 			std::swap(_list.files[index], _list.files.back());
 			if (!result) {
-				Ui::Toast::Show(tr::lng_slowmode_no_many(tr::now));
+				Ui::Toast::Show(
+					toastParent,
+					tr::lng_slowmode_no_many(tr::now));
 				return false;
 			}
 			return true;
 		};
 		const auto callback = [=](FileDialog::OpenResult &&result) {
+			const auto premium = _controller->session().premium();
 			FileDialogCallback(
 				std::move(result),
 				checkResult,
-				replace);
+				replace,
+				premium,
+				toastParent);
 		};
 
 		FileDialog::GetOpenPath(
@@ -653,10 +672,33 @@ void SendFilesBox::updateSendWayControlsVisibility() {
 }
 
 void SendFilesBox::setupCaption() {
-	_caption->setMaxLength(
-		_controller->session().serverConfig().captionLengthMax);
+	const auto allow = [=](const auto&) {
+		return _allowEmojiWithoutPremium;
+	};
+	InitMessageFieldHandlers(
+		_controller,
+		_caption.data(),
+		Window::GifPauseReason::Layer,
+		allow);
+	Ui::Emoji::SuggestionsController::Init(
+		getDelegate()->outerContainer(),
+		_caption,
+		&_controller->session(),
+		{ .suggestCustomEmoji = true, .allowCustomWithoutPremium = allow });
+
+	if (!_prefilledCaptionText.text.isEmpty()) {
+		_caption->setTextWithTags(
+			_prefilledCaptionText,
+			Ui::InputField::HistoryAction::Clear);
+
+		auto cursor = _caption->textCursor();
+		cursor.movePosition(QTextCursor::End);
+		_caption->setTextCursor(cursor);
+	}
 	_caption->setSubmitSettings(
 		Core::App().settings().sendSubmitWay());
+	_caption->setMaxLength(kMaxMessageLength);
+
 	connect(_caption, &Ui::InputField::resized, [=] {
 		captionResized();
 	});
@@ -678,21 +720,6 @@ void SendFilesBox::setupCaption() {
 		}
 		Unexpected("action in MimeData hook.");
 	});
-	const auto show = std::make_shared<Window::Show>(_controller);
-	const auto session = &_controller->session();
-
-	_caption->setInstantReplaces(Ui::InstantReplaces::Default());
-	_caption->setInstantReplacesEnabled(
-		Core::App().settings().replaceEmojiValue());
-	_caption->setMarkdownReplacesEnabled(rpl::single(true));
-	_caption->setEditLinkCallback(
-		DefaultEditLinkCallback(show, session, _caption));
-	Ui::Emoji::SuggestionsController::Init(
-		getDelegate()->outerContainer(),
-		_caption,
-		session);
-
-	InitSpellchecker(show, session, _caption);
 
 	updateCaptionPlaceholder();
 	setupEmojiPanel();
@@ -702,21 +729,39 @@ void SendFilesBox::setupEmojiPanel() {
 	Expects(_caption != nullptr);
 
 	const auto container = getDelegate()->outerContainer();
+	using Selector = ChatHelpers::TabbedSelector;
 	_emojiPanel = base::make_unique_q<ChatHelpers::TabbedPanel>(
 		container,
 		_controller,
-		object_ptr<ChatHelpers::TabbedSelector>(
+		object_ptr<Selector>(
 			nullptr,
 			_controller,
-			ChatHelpers::TabbedSelector::Mode::EmojiOnly));
+			Window::GifPauseReason::Layer,
+			Selector::Mode::EmojiOnly));
 	_emojiPanel->setDesiredHeightValues(
 		1.,
 		st::emojiPanMinHeight / 2,
 		st::emojiPanMinHeight);
 	_emojiPanel->hide();
+	_emojiPanel->selector()->setAllowEmojiWithoutPremium(
+		_allowEmojiWithoutPremium);
 	_emojiPanel->selector()->emojiChosen(
-	) | rpl::start_with_next([=](EmojiPtr emoji) {
-		Ui::InsertEmojiAtCursor(_caption->textCursor(), emoji);
+	) | rpl::start_with_next([=](ChatHelpers::EmojiChosen data) {
+		Ui::InsertEmojiAtCursor(_caption->textCursor(), data.emoji);
+	}, lifetime());
+	_emojiPanel->selector()->customEmojiChosen(
+	) | rpl::start_with_next([=](ChatHelpers::FileChosen data) {
+		const auto info = data.document->sticker();
+		if (info
+			&& info->setType == Data::StickersType::Emoji
+			&& !_controller->session().premium()
+			&& !_allowEmojiWithoutPremium) {
+			ShowPremiumPreviewBox(
+				_controller,
+				PremiumPreview::AnimatedEmoji);
+		} else {
+			Data::InsertCustomEmoji(_caption.data(), data.document);
+		}
 	}, lifetime());
 
 	const auto filterCallback = [=](not_null<QEvent*> event) {
@@ -759,14 +804,18 @@ void SendFilesBox::captionResized() {
 }
 
 bool SendFilesBox::canAddFiles(not_null<const QMimeData*> data) const {
-	return (data->hasUrls() && CanAddUrls(data->urls())) || data->hasImage();
+	return (data->hasUrls() && CanAddUrls(base::GetMimeUrls(data))) || data->hasImage();
 }
 
 bool SendFilesBox::addFiles(not_null<const QMimeData*> data) {
+	const auto premium = _controller->session().premium();
 	auto list = [&] {
-		const auto urls = data->hasUrls() ? data->urls() : QList<QUrl>();
+		const auto urls = data->hasUrls() ? base::GetMimeUrls(data) : QList<QUrl>();
 		auto result = CanAddUrls(urls)
-			? Storage::PrepareMediaList(urls, st::sendMediaPreviewSize)
+			? Storage::PrepareMediaList(
+				urls,
+				st::sendMediaPreviewSize,
+				premium)
 			: Ui::PreparedList(
 				Ui::PreparedList::Error::EmptyFile,
 				QString());
@@ -939,10 +988,10 @@ void SendFilesBox::updateControlsGeometry() {
 }
 
 void SendFilesBox::setInnerFocus() {
-	if (!_caption || _caption->isHidden()) {
-		setFocus();
-	} else {
+	if (_caption && !_caption->isHidden()) {
 		_caption->setFocusFast();
+	} else {
+		BoxContent::setInnerFocus();
 	}
 }
 
@@ -960,6 +1009,20 @@ void SendFilesBox::saveSendWaySettings() {
 		Core::App().settings().setSendFilesWay(way);
 		Core::App().saveSettingsDelayed();
 	}
+}
+
+bool SendFilesBox::validateLength(const QString &text) const {
+	const auto session = &_controller->session();
+	const auto limit = Data::PremiumLimits(session).captionLengthCurrent();
+	const auto remove = int(text.size()) - limit;
+	const auto way = _sendWay.current();
+	if (remove <= 0
+		|| !_list.canAddCaption(
+			way.groupFiles() && way.sendImagesAsPhotos())) {
+		return true;
+	}
+	_controller->show(Box(CaptionLimitReachedBox, session, remove));
+	return false;
 }
 
 void SendFilesBox::send(
@@ -990,6 +1053,9 @@ void SendFilesBox::send(
 		auto caption = (_caption && !_caption->isHidden())
 			? _caption->getTextWithAppliedMarkdown()
 			: TextWithTags();
+		if (!validateLength(caption.text)) {
+			return;
+		}
 		_confirmedCallback(
 			std::move(_list),
 			_sendWay.current(),

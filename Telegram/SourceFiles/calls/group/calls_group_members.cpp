@@ -30,8 +30,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "core/application.h" // Core::App().domain, .activeWindow.
 #include "main/main_domain.h" // Core::App().domain().activate.
 #include "main/main_session.h"
-#include "main/main_account.h" // account().appConfig().
-#include "main/main_app_config.h" // appConfig().get<double>().
 #include "info/profile/info_profile_values.h" // Info::Profile::NameValue.
 #include "boxes/peers/edit_participants_box.h" // SubscribeToMigration.
 #include "boxes/peers/prepare_short_info_box.h" // PrepareShortInfo...
@@ -1198,7 +1196,7 @@ base::unique_qptr<Ui::PopupMenu> Members::Controller::createRowContextMenu(
 		if (const auto window = Core::App().separateWindowForPeer(
 				participantPeer)) {
 			return window->sessionController();
-		} else if (const auto window = Core::App().activeWindow()) {
+		} else if (const auto window = Core::App().primaryWindow()) {
 			if (const auto controller = window->sessionController()) {
 				if (&controller->session() == session) {
 					return controller;

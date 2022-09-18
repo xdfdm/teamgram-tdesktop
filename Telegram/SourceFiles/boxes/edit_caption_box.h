@@ -52,6 +52,7 @@ private:
 	void setupPhotoEditorEventHandler();
 	void setupField();
 	void setupControls();
+	void setInitialText();
 
 	void updateBoxSize();
 	void captionResized();
@@ -62,6 +63,7 @@ private:
 
 	void setupDragArea();
 
+	bool validateLength(const QString &text) const;
 	void save();
 
 	bool fileFromClipboard(not_null<const QMimeData*> data);

@@ -13,11 +13,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "media/audio/media_audio_track.h"
 #include "media/audio/media_openal_functions.h"
 #include "media/streaming/media_streaming_utility.h"
+#include "webrtc/webrtc_media_devices.h"
 #include "data/data_document.h"
 #include "data/data_file_origin.h"
 #include "data/data_session.h"
 #include "platform/platform_audio.h"
 #include "core/application.h"
+#include "core/core_settings.h"
 #include "main/main_session.h"
 
 #include <al.h>
@@ -195,6 +197,10 @@ void Start(not_null<Instance*> instance) {
 	qRegisterMetaType<AudioMsgId>();
 	qRegisterMetaType<VoiceWaveform>();
 
+	if (!Webrtc::InitPipewireStubs()) {
+		LOG(("Audio Info: Failed to load pipewire 0.3 stubs."));
+	}
+
 	auto loglevel = getenv("ALSOFT_LOGLEVEL");
 	LOG(("OpenAL Logging Level: %1").arg(loglevel ? loglevel : "(not set)"));
 
@@ -309,12 +315,15 @@ base::Observable<AudioMsgId> &Updated() {
 
 // Thread: Any. Must be locked: AudioMutex.
 float64 ComputeVolume(AudioMsgId::Type type) {
-	switch (type) {
-	case AudioMsgId::Type::Voice: return VolumeMultiplierAll;
-	case AudioMsgId::Type::Song: return VolumeMultiplierSong * mixer()->getSongVolume();
-	case AudioMsgId::Type::Video: return mixer()->getVideoVolume();
-	}
-	return 1.;
+	const auto gain = [&] {
+		switch (type) {
+		case AudioMsgId::Type::Voice: return VolumeMultiplierAll;
+		case AudioMsgId::Type::Song: return VolumeMultiplierSong * mixer()->getSongVolume();
+		case AudioMsgId::Type::Video: return mixer()->getVideoVolume();
+		}
+		return 1.;
+	}();
+	return gain * gain * gain;
 }
 
 Mixer *mixer() {

@@ -120,6 +120,17 @@ QString FormatDurationWords(qint64 duration) {
 	return tr::lng_seconds(tr::now, lt_count, duration);
 }
 
+QString FormatDurationWordsSlowmode(qint64 duration) {
+	if (duration > 59) {
+		auto minutes = (duration / 60);
+		auto minutesCount = tr::lng_duration_minsec_minutes(tr::now, lt_count, minutes);
+		auto seconds = (duration % 60);
+		auto secondsCount = tr::lng_duration_minsec_seconds(tr::now, lt_count, seconds);
+		return tr::lng_duration_minutes_seconds(tr::now, lt_minutes_count, minutesCount, lt_seconds_count, secondsCount);
+	}
+	return tr::lng_slowmode_seconds(tr::now, lt_count, duration);
+}
+
 QString FormatDurationAndSizeText(qint64 duration, qint64 size) {
 	return tr::lng_duration_and_size(tr::now, lt_duration, FormatDurationText(duration), lt_size, FormatSizeText(size));
 }
@@ -405,7 +416,9 @@ QString FormatTTLTiny(float64 ttl) {
 		? tr::lng_weeks_tiny(tr::now, lt_count, int(ttl / (86400 * 7)))
 		: (ttl <= (86400 * 31) * 11)
 		? tr::lng_months_tiny({}, lt_count, int(ttl / (86400 * 31)))
-		: tr::lng_years_tiny({}, lt_count, std::round(ttl / (86400 * 365)));
+		: (ttl <= 86400 * 366)
+		? tr::lng_years_tiny({}, lt_count, std::round(ttl / (86400 * 365)))
+		: QString();
 }
 
 QString FormatMuteFor(float64 sec) {
@@ -420,14 +433,22 @@ QString FormatMuteForTiny(float64 sec) {
 	return (sec <= 60)
 		? QString()
 		: (sec <= 60 * 59)
-		? tr::lng_minutes_tiny(tr::now, lt_count, int(sec / 60))
+		? tr::lng_minutes_tiny(tr::now, lt_count, std::round(sec / 60))
 		: (sec <= 3600 * 23)
-		? tr::lng_hours_tiny(tr::now, lt_count, int(sec / 3600))
+		? tr::lng_hours_tiny(tr::now, lt_count, std::round(sec / 3600))
 		: (sec <= 86400 * 6)
-		? tr::lng_days_tiny(tr::now, lt_count, int(sec / 86400))
+		? tr::lng_days_tiny(tr::now, lt_count, std::round(sec / 86400))
 		: (sec <= (86400 * 7) * 3)
-		? tr::lng_weeks_tiny(tr::now, lt_count, int(sec / (86400 * 7)))
+		? tr::lng_weeks_tiny(tr::now, lt_count, std::round(sec / (86400 * 7)))
+		: (sec <= (86400 * 31) * 11)
+		? tr::lng_months_tiny({}, lt_count, std::round(sec / (86400 * 31)))
+		: (sec <= 86400 * 366)
+		? tr::lng_years_tiny({}, lt_count, std::round(sec / (86400 * 365)))
 		: QString();
+}
+
+QString FormatResetCloudPasswordIn(float64 sec) {
+	return (sec >= 3600) ? FormatTTL(sec) : FormatDurationText(sec);
 }
 
 } // namespace Ui

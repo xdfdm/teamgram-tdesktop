@@ -130,6 +130,7 @@ void Gif::setPosition(int32 position) {
 void DeleteSavedGifClickHandler::onClickImpl() const {
 	ChatHelpers::AddGifAction(
 		[](QString, Fn<void()> &&done, const style::icon*) { done(); },
+		nullptr,
 		_data);
 }
 
@@ -189,13 +190,13 @@ void Gif::paint(Painter &p, const QRect &clip, const PaintContext *context) cons
 			_thumb = pixmap;
 			_thumbGood = true;
 		}
-		p.drawPixmap(r.topLeft(), pixmap);
+		p.drawImage(r.topLeft(), pixmap);
 	} else {
 		prepareThumbnail(r.size(), frame);
 		if (_thumb.isNull()) {
 			p.fillRect(r, st::overviewPhotoBg);
 		} else {
-			p.drawPixmap(r.topLeft(), _thumb);
+			p.drawImage(r.topLeft(), _thumb);
 		}
 	}
 
@@ -339,7 +340,7 @@ void Gif::validateThumbnail(
 			.options = (Images::Option::TransparentBackground
 				| (good ? Images::Option() : Images::Option::Blur)),
 			.outer = size,
-		});
+		}).toImage();
 }
 
 void Gif::prepareThumbnail(QSize size, QSize frame) const {
@@ -517,7 +518,7 @@ void Sticker::paint(Painter &p, const QRect &clip, const PaintContext *context) 
 			.frame = size,
 			.keepAlpha = true,
 		}, context->paused ? 0 : context->ms);
-		p.drawPixmap(
+		p.drawImage(
 			(st::stickerPanSize.width() - size.width()) / 2,
 			(st::stickerPanSize.height() - size.width()) / 2,
 			frame);
@@ -1104,8 +1105,9 @@ void File::checkAnimationFinished() const {
 
 bool File::updateStatusText() const {
 	ensureDataMediaCreated();
-	bool showPause = false;
-	int32 statusSize = 0, realDuration = 0;
+	auto showPause = false;
+	auto statusSize = int64();
+	auto realDuration = TimeId();
 	if (_document->status == FileDownloadFailed || _document->status == FileUploadFailed) {
 		statusSize = Ui::FileStatusSizeFailed;
 	} else if (_document->uploading()) {
@@ -1132,7 +1134,7 @@ bool File::updateStatusText() const {
 	}
 
 	if (statusSize != _statusSize) {
-		int32 duration = _document->isSong()
+		TimeId duration = _document->isSong()
 			? _document->song()->duration
 			: (_document->isVoiceMessage()
 				? _document->voice()->duration
@@ -1142,7 +1144,11 @@ bool File::updateStatusText() const {
 	return showPause;
 }
 
-void File::setStatusSize(int32 newSize, int32 fullSize, int32 duration, qint64 realDuration) const {
+void File::setStatusSize(
+		int64 newSize,
+		int64 fullSize,
+		TimeId duration,
+		TimeId realDuration) const {
 	_statusSize = newSize;
 	if (_statusSize == Ui::FileStatusSizeReady) {
 		_statusText = (duration >= 0) ? Ui::FormatDurationAndSizeText(duration, fullSize) : (duration < -1 ? Ui::FormatGifAndSizeText(fullSize) : Ui::FormatSizeText(fullSize));
@@ -1177,7 +1183,7 @@ void Contact::initDimensions() {
 }
 
 void Contact::paint(Painter &p, const QRect &clip, const PaintContext *context) const {
-	int32 left = st::emojiPanHeaderLeft - st::inlineResultsLeft;
+	int32 left = st::defaultEmojiPan.headerLeft - st::inlineResultsLeft;
 
 	left = st::inlineFileSize + st::inlineThumbSkip;
 	prepareThumbnail(st::inlineFileSize, st::inlineFileSize);
@@ -1266,7 +1272,7 @@ Article::Article(
 
 void Article::initDimensions() {
 	_maxw = st::emojiPanWidth - st::emojiScroll.width - st::inlineResultsLeft;
-	int32 textWidth = _maxw - (_withThumb ? (st::inlineThumbSize + st::inlineThumbSkip) : (st::emojiPanHeaderLeft - st::inlineResultsLeft));
+	int32 textWidth = _maxw - (_withThumb ? (st::inlineThumbSize + st::inlineThumbSkip) : (st::defaultEmojiPan.headerLeft - st::inlineResultsLeft));
 	TextParseOptions titleOpts = { 0, textWidth, 2 * st::semiboldFont->height, Qt::LayoutDirectionAuto };
 	_title.setText(st::semiboldTextStyle, TextUtilities::SingleLine(_result->getLayoutTitle()), titleOpts);
 	int32 titleHeight = qMin(_title.countHeight(textWidth), 2 * st::semiboldFont->height);
@@ -1288,7 +1294,7 @@ int32 Article::resizeGetHeight(int32 width) {
 	if (_url) {
 		_urlText = getResultUrl();
 		_urlWidth = st::normalFont->width(_urlText);
-		int32 textWidth = _width - (_withThumb ? (st::inlineThumbSize + st::inlineThumbSkip) : (st::emojiPanHeaderLeft - st::inlineResultsLeft));
+		int32 textWidth = _width - (_withThumb ? (st::inlineThumbSize + st::inlineThumbSkip) : (st::defaultEmojiPan.headerLeft - st::inlineResultsLeft));
 		if (_urlWidth > textWidth) {
 			_urlText = st::normalFont->elided(_urlText, textWidth);
 			_urlWidth = st::normalFont->width(_urlText);
@@ -1299,7 +1305,7 @@ int32 Article::resizeGetHeight(int32 width) {
 }
 
 void Article::paint(Painter &p, const QRect &clip, const PaintContext *context) const {
-	int32 left = st::emojiPanHeaderLeft - st::inlineResultsLeft;
+	int32 left = st::defaultEmojiPan.headerLeft - st::inlineResultsLeft;
 	if (_withThumb) {
 		left = st::inlineThumbSize + st::inlineThumbSkip;
 		prepareThumbnail(st::inlineThumbSize, st::inlineThumbSize);
@@ -1464,7 +1470,7 @@ void Game::setPosition(int32 position) {
 }
 
 void Game::paint(Painter &p, const QRect &clip, const PaintContext *context) const {
-	int32 left = st::emojiPanHeaderLeft - st::inlineResultsLeft;
+	int32 left = st::defaultEmojiPan.headerLeft - st::inlineResultsLeft;
 
 	left = st::inlineThumbSize + st::inlineThumbSkip;
 	auto rthumb = style::rtlrect(0, st::inlineRowMargin, st::inlineThumbSize, st::inlineThumbSize, _width);
@@ -1513,7 +1519,7 @@ void Game::paint(Painter &p, const QRect &clip, const PaintContext *context) con
 				_thumb = pixmap;
 				_thumbGood = true;
 			}
-			p.drawPixmapLeft(rthumb.topLeft(), _width, pixmap);
+			p.drawImage(rthumb.topLeft(), pixmap);
 			thumbDisplayed = true;
 		}
 	}
@@ -1523,7 +1529,7 @@ void Game::paint(Painter &p, const QRect &clip, const PaintContext *context) con
 		if (_thumb.isNull()) {
 			p.fillRect(rthumb, st::overviewPhotoBg);
 		} else {
-			p.drawPixmapLeft(rthumb.topLeft(), _width, _thumb);
+			p.drawImage(rthumb.topLeft(), _thumb);
 		}
 	}
 
@@ -1624,7 +1630,7 @@ void Game::validateThumbnail(Image *image, QSize size, bool good) const {
 			.options = (Images::Option::TransparentBackground
 				| (good ? Images::Option() : Images::Option::Blur)),
 			.outer = size,
-		});
+		}).toImage();
 }
 
 bool Game::isRadialAnimation() const {

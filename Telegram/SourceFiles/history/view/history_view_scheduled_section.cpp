@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/view/history_view_top_bar_widget.h"
 #include "history/view/history_view_list_widget.h"
 #include "history/view/history_view_schedule_box.h"
+#include "history/view/history_view_sticker_toast.h"
 #include "history/history.h"
 #include "history/history_drag_area.h"
 #include "history/history_item.h"
@@ -36,15 +37,19 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/delete_messages_box.h"
 #include "boxes/edit_caption_box.h"
 #include "boxes/send_files_box.h"
+#include "boxes/premium_limits_box.h"
 #include "window/window_adaptive.h"
 #include "window/window_session_controller.h"
 #include "window/window_peer_menu.h"
 #include "base/event_filter.h"
 #include "base/call_delayed.h"
+#include "base/qt/qt_key_modifiers.h"
 #include "core/file_utilities.h"
+#include "chat_helpers/tabbed_selector.h"
 #include "main/main_session.h"
 #include "data/data_chat_participant_status.h"
 #include "data/data_session.h"
+#include "data/data_changes.h"
 #include "data/data_scheduled_messages.h"
 #include "data/data_user.h"
 #include "data/data_message_reactions.h"
@@ -66,7 +71,7 @@ namespace {
 bool CanSendFiles(not_null<const QMimeData*> data) {
 	if (data->hasImage()) {
 		return true;
-	} else if (const auto urls = data->urls(); !urls.empty()) {
+	} else if (const auto urls = base::GetMimeUrls(data); !urls.empty()) {
 		if (ranges::all_of(urls, &QUrl::isLocalFile)) {
 			return true;
 		}
@@ -104,6 +109,7 @@ ScheduledWidget::ScheduledWidget(
 , _composeControls(std::make_unique<ComposeControls>(
 	this,
 	controller,
+	[=](not_null<DocumentData*> emoji) { listShowPremiumToast(emoji); },
 	ComposeControls::Mode::Scheduled,
 	SendMenu::Type::Disabled))
 , _scrollDown(
@@ -188,6 +194,14 @@ ScheduledWidget::ScheduledWidget(
 		_inner->setEmptyInfoWidget(std::move(emptyInfo));
 	}
 
+	_history->session().changes().messageUpdates(
+		Data::MessageUpdate::Flag::Destroyed
+	) | rpl::start_with_next([=](const Data::MessageUpdate &update) {
+		while (update.item == _replyReturn) {
+			calculateNextReplyReturn();
+		}
+	}, lifetime());
+
 	setupScrollDownButton();
 	setupComposeControls();
 }
@@ -247,20 +261,19 @@ void ScheduledWidget::setupComposeControls() {
 			[=] { _choosingAttach = false; chooseAttach(); });
 	}, lifetime());
 
-	using Selector = ChatHelpers::TabbedSelector;
-
 	_composeControls->fileChosen(
-	) | rpl::start_with_next([=](Selector::FileChosen chosen) {
-		sendExistingDocument(chosen.document);
+	) | rpl::start_with_next([=](ChatHelpers::FileChosen data) {
+		controller()->hideLayer(anim::type::normal);
+		sendExistingDocument(data.document);
 	}, lifetime());
 
 	_composeControls->photoChosen(
-	) | rpl::start_with_next([=](Selector::PhotoChosen chosen) {
+	) | rpl::start_with_next([=](ChatHelpers::PhotoChosen chosen) {
 		sendExistingPhoto(chosen.photo);
 	}, lifetime());
 
 	_composeControls->inlineResultChosen(
-	) | rpl::start_with_next([=](Selector::InlineChosen chosen) {
+	) | rpl::start_with_next([=](ChatHelpers::InlineChosen chosen) {
 		sendInlineResult(chosen.result, chosen.bot);
 	}, lifetime());
 
@@ -308,6 +321,7 @@ void ScheduledWidget::chooseAttach() {
 			_history->peer,
 			ChatRestriction::SendMedia)) {
 		Ui::ShowMultilineToast({
+			.parentOverride = Window::Show(controller()).toastParent(),
 			.text = { *error },
 		});
 		return;
@@ -332,9 +346,11 @@ void ScheduledWidget::chooseAttach() {
 				uploadFile(result.remoteContent, SendMediaType::File);
 			}
 		} else {
+			const auto premium = controller()->session().user()->isPremium();
 			auto list = Storage::PrepareMediaList(
 				result.paths,
-				st::sendMediaPreviewSize);
+				st::sendMediaPreviewSize,
+				premium);
 			confirmSendingFiles(std::move(list));
 		}
 	}), nullptr);
@@ -345,11 +361,13 @@ bool ScheduledWidget::confirmSendingFiles(
 		std::optional<bool> overrideSendImagesAsPhotos,
 		const QString &insertTextOnCancel) {
 	const auto hasImage = data->hasImage();
+	const auto premium = controller()->session().user()->isPremium();
 
-	if (const auto urls = data->urls(); !urls.empty()) {
+	if (const auto urls = base::GetMimeUrls(data); !urls.empty()) {
 		auto list = Storage::PrepareMediaList(
 			urls,
-			st::sendMediaPreviewSize);
+			st::sendMediaPreviewSize,
+			premium);
 		if (list.error != Ui::PreparedList::Error::NonLocalUrl) {
 			if (list.error == Ui::PreparedList::Error::None
 				|| !hasImage) {
@@ -382,12 +400,11 @@ bool ScheduledWidget::confirmSendingFiles(
 		return false;
 	}
 
-	using SendLimit = SendFilesBox::SendLimit;
 	auto box = Box<SendFilesBox>(
 		controller(),
 		std::move(list),
 		_composeControls->getTextWithAppliedMarkdown(),
-		_history->peer->slowmodeApplied() ? SendLimit::One : SendLimit::Many,
+		_history->peer,
 		CanScheduleUntilOnline(_history->peer)
 			? Api::SendType::ScheduledToUser
 			: Api::SendType::Scheduled,
@@ -469,6 +486,47 @@ bool ScheduledWidget::confirmSendingFiles(
 	return confirmSendingFiles(std::move(list), insertTextOnCancel);
 }
 
+void ScheduledWidget::pushReplyReturn(not_null<HistoryItem*> item) {
+	if (_inner->viewByPosition(item->position())) {
+		_replyReturns.push_back(item->id);
+	} else {
+		return;
+	}
+	_replyReturn = item;
+	updateScrollDownVisibility();
+}
+
+void ScheduledWidget::computeCurrentReplyReturn() {
+	_replyReturn = _replyReturns.empty()
+		? nullptr
+		: _history->owner().message(_history->peer, _replyReturns.back());
+}
+
+void ScheduledWidget::calculateNextReplyReturn() {
+	_replyReturn = nullptr;
+	while (!_replyReturns.empty() && !_replyReturn) {
+		_replyReturns.pop_back();
+		computeCurrentReplyReturn();
+	}
+	if (!_replyReturn) {
+		updateScrollDownVisibility();
+	}
+}
+
+void ScheduledWidget::checkReplyReturns() {
+	const auto currentTop = _scroll->scrollTop();
+	for (; _replyReturn != nullptr; calculateNextReplyReturn()) {
+		const auto position = _replyReturn->position();
+		const auto scrollTop = _inner->scrollTopForPosition(position);
+		const auto scrolledBelow = scrollTop
+			? (currentTop >= std::min(*scrollTop, _scroll->scrollTopMax()))
+			: _inner->isBelowPosition(position);
+		if (!scrolledBelow) {
+			break;
+		}
+	}
+}
+
 void ScheduledWidget::uploadFile(
 		const QByteArray &fileContent,
 		SendMediaType type) {
@@ -501,18 +559,20 @@ bool ScheduledWidget::showSendingFilesError(
 			tr::now,
 			lt_name,
 			list.errorData);
-		case Error::TooLargeFile: return tr::lng_send_image_too_large(
-			tr::now,
-			lt_name,
-			list.errorData);
+		case Error::TooLargeFile: return u"(toolarge)"_q;
 		}
 		return tr::lng_forward_send_files_cant(tr::now);
 	}();
 	if (text.isEmpty()) {
 		return false;
+	} else if (text == u"(toolarge)"_q) {
+		const auto fileSize = list.files.back().size;
+		controller()->show(Box(FileSizeLimitBox, &session(), fileSize));
+		return true;
 	}
 
 	Ui::ShowMultilineToast({
+		.parentOverride = Window::Show(controller()).toastParent(),
 		.text = { text },
 	});
 	return true;
@@ -548,6 +608,7 @@ void ScheduledWidget::send(Api::SendOptions options) {
 	//	message.textWithTags);
 	//if (!error.isEmpty()) {
 	//	Ui::ShowMultilineToast({
+	//		.parentOverride = Window::Show(controller()).toastParent(),
 	//		.text = { error },
 	//	});
 	//	return;
@@ -616,7 +677,9 @@ void ScheduledWidget::edit(
 		}
 		return;
 	} else if (!left.text.isEmpty()) {
-		controller()->show(Ui::MakeInformBox(tr::lng_edit_too_long()));
+		const auto remove = left.text.size();
+		controller()->show(Ui::MakeInformBox(
+			tr::lng_edit_limit_reached(tr::now, lt_count, remove)));
 		return;
 	}
 
@@ -627,24 +690,23 @@ void ScheduledWidget::edit(
 		session().api().request(base::take(*saveEditMsgRequestId)).cancel();
 	});
 
-	const auto done = [=](const MTPUpdates &result, mtpRequestId requestId) {
+	const auto done = [=](mtpRequestId requestId) {
 		if (requestId == *saveEditMsgRequestId) {
 			*saveEditMsgRequestId = 0;
 			_composeControls->cancelEditMessage();
 		}
 	};
 
-	const auto fail = [=](const MTP::Error &error, mtpRequestId requestId) {
+	const auto fail = [=](const QString &error, mtpRequestId requestId) {
 		if (requestId == *saveEditMsgRequestId) {
 			*saveEditMsgRequestId = 0;
 		}
 
-		const auto &err = error.type();
-		if (ranges::contains(Api::kDefaultEditMessagesErrors, err)) {
+		if (ranges::contains(Api::kDefaultEditMessagesErrors, error)) {
 			controller()->show(Ui::MakeInformBox(tr::lng_edit_error()));
-		} else if (err == u"MESSAGE_NOT_MODIFIED"_q) {
+		} else if (error == u"MESSAGE_NOT_MODIFIED"_q) {
 			_composeControls->cancelEditMessage();
-		} else if (err == u"MESSAGE_EMPTY"_q) {
+		} else if (error == u"MESSAGE_EMPTY"_q) {
 			_composeControls->focus();
 		} else {
 			controller()->show(Ui::MakeInformBox(tr::lng_edit_error()));
@@ -684,6 +746,8 @@ bool ScheduledWidget::sendExistingDocument(
 		controller()->show(
 			Ui::MakeInformBox(*error),
 			Ui::LayerOption::KeepOther);
+		return false;
+	} else if (ShowSendPremiumError(controller(), document)) {
 		return false;
 	}
 
@@ -796,11 +860,23 @@ void ScheduledWidget::setupScrollDownButton() {
 }
 
 void ScheduledWidget::scrollDownClicked() {
+	if (base::IsCtrlPressed()) {
+		showAtEnd();
+	} else if (_replyReturn) {
+		showAtPosition(_replyReturn->position());
+	} else {
+		showAtEnd();
+	}
+}
+
+void ScheduledWidget::showAtEnd() {
 	showAtPosition(Data::MaxMessagePosition);
 }
 
-void ScheduledWidget::showAtPosition(Data::MessagePosition position) {
-	if (showAtPositionNow(position)) {
+void ScheduledWidget::showAtPosition(
+		Data::MessagePosition position,
+		HistoryItem *originItem) {
+	if (showAtPositionNow(position, originItem)) {
 		if (const auto highlight = base::take(_highlightMessageId)) {
 			_inner->highlightMessage(highlight);
 		}
@@ -816,8 +892,13 @@ void ScheduledWidget::showAtPosition(Data::MessagePosition position) {
 	}
 }
 
-bool ScheduledWidget::showAtPositionNow(Data::MessagePosition position) {
+bool ScheduledWidget::showAtPositionNow(
+		Data::MessagePosition position,
+		HistoryItem *originItem) {
 	if (const auto scrollTop = _inner->scrollTopForPosition(position)) {
+		while (_replyReturn && position.fullId.msg == _replyReturn->id) {
+			calculateNextReplyReturn();
+		}
 		const auto currentScrollTop = _scroll->scrollTop();
 		const auto wanted = std::clamp(
 			*scrollTop,
@@ -833,6 +914,13 @@ bool ScheduledWidget::showAtPositionNow(Data::MessagePosition position) {
 			(std::abs(fullDelta) > limit
 				? HistoryView::ListWidget::AnimatedScroll::Part
 				: HistoryView::ListWidget::AnimatedScroll::Full));
+		if (position != Data::MaxMessagePosition
+			&& position != Data::UnreadMessagePosition) {
+			_inner->highlightMessage(position.fullId);
+		}
+		if (originItem) {
+			pushReplyReturn(originItem);
+		}
 		return true;
 	}
 	return false;
@@ -1033,6 +1121,9 @@ void ScheduledWidget::onScroll() {
 }
 
 void ScheduledWidget::updateInnerVisibleArea() {
+	if (!_inner->animatedScrolling()) {
+		checkReplyReturns();
+	}
 	const auto scrollTop = _scroll->scrollTop();
 	_inner->setVisibleTopBottom(scrollTop, scrollTop + _scroll->height());
 	updateScrollDownVisibility();
@@ -1193,6 +1284,35 @@ bool ScheduledWidget::listIsGoodForAroundPosition(
 	return true;
 }
 
+bool ScheduledWidget::showMessage(
+		PeerId peerId,
+		const Window::SectionShow &params,
+		MsgId messageId) {
+	if (peerId != _history->peer->id) {
+		return false;
+	}
+	const auto id = FullMsgId(_history->peer->id, messageId);
+	const auto message = _history->owner().message(id);
+	if (!message || !_inner->viewByPosition(message->position())) {
+		return false;
+	}
+
+	const auto originItem = [&]() -> HistoryItem* {
+		using OriginMessage = Window::SectionShow::OriginMessage;
+		if (const auto origin = std::get_if<OriginMessage>(&params.origin)) {
+			if (const auto returnTo = session().data().message(origin->id)) {
+				if (_inner->viewByPosition(returnTo->position())
+					&& _replyReturn != returnTo) {
+					return returnTo;
+				}
+			}
+		}
+		return nullptr;
+	}();
+	showAtPosition(message->position(), originItem);
+	return true;
+}
+
 Window::SectionActionResult ScheduledWidget::sendBotCommand(
 		Bot::SendCommandRequest request) {
 	if (request.peer != _history->peer) {
@@ -1237,9 +1357,19 @@ CopyRestrictionType ScheduledWidget::listSelectRestrictionType() {
 }
 
 auto ScheduledWidget::listAllowedReactionsValue()
--> rpl::producer<std::optional<base::flat_set<QString>>> {
-	const auto empty = base::flat_set<QString>();
-	return rpl::single(std::optional<base::flat_set<QString>>(empty));
+-> rpl::producer<Data::AllowedReactions> {
+	return rpl::single(Data::AllowedReactions());
+}
+
+void ScheduledWidget::listShowPremiumToast(
+		not_null<DocumentData*> document) {
+	if (!_stickerToast) {
+		_stickerToast = std::make_unique<HistoryView::StickerToast>(
+			controller(),
+			this,
+			[=] { _stickerToast = nullptr; });
+	}
+	_stickerToast->showFor(document);
 }
 
 void ScheduledWidget::confirmSendNowSelected() {

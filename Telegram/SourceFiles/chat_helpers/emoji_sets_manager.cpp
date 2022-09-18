@@ -17,8 +17,8 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/emoji_config.h"
 #include "ui/ui_utility.h"
 #include "core/application.h"
+#include "lang/lang_keys.h"
 #include "main/main_account.h"
-#include "mainwidget.h"
 #include "storage/storage_cloud_blob.h"
 #include "styles/style_layers.h"
 #include "styles/style_boxes.h"
@@ -40,9 +40,9 @@ inline auto PreviewPath(int i) {
 
 const auto kSets = {
 	Set{ { 0,    0,         0, "Mac" },       PreviewPath(0) },
-	Set{ { 1, 1112, 7'914'459, "Android" },   PreviewPath(1) },
-	Set{ { 2, 1113, 5'287'724, "Twemoji" },   PreviewPath(2) },
-	Set{ { 3, 1114, 6'687'347, "JoyPixels" }, PreviewPath(3) },
+	Set{ { 1, 1392, 8'184'590, "Android" },   PreviewPath(1) },
+	Set{ { 2, 1393, 5'413'219, "Twemoji" },   PreviewPath(2) },
+	Set{ { 3, 1394, 6'967'218, "JoyPixels" }, PreviewPath(3) },
 };
 
 using Loading = MTP::DedicatedLoader::Progress;
@@ -120,7 +120,7 @@ void SetGlobalLoader(base::unique_qptr<Loader> loader) {
 	GlobalLoaderValues.fire(GlobalLoader.get());
 }
 
-int GetDownloadSize(int id) {
+int64 GetDownloadSize(int id) {
 	return ranges::find(kSets, id, &Set::id)->size;
 }
 

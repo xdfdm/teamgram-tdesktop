@@ -12,6 +12,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "base/observer.h"
 #include "base/weak_ptr.h"
 #include "base/timer.h"
+#include "boxes/gift_premium_box.h" // GiftPremiumValidator.
 #include "data/data_chat_participant_status.h"
 #include "dialogs/dialogs_key.h"
 #include "ui/layers/layer_widget.h"
@@ -31,6 +32,7 @@ enum class WindowLayout;
 namespace ChatHelpers {
 class TabbedSelector;
 class EmojiInteractions;
+struct FileChosen;
 } // namespace ChatHelpers
 
 namespace Main {
@@ -39,6 +41,8 @@ class Session;
 
 namespace InlineBots {
 class AttachWebView;
+enum class PeerType : uint8;
+using PeerTypes = base::flags<PeerType>;
 } // namespace InlineBots
 
 namespace Calls {
@@ -81,7 +85,7 @@ class FiltersMenu;
 enum class GifPauseReason {
 	Any           = 0,
 	InlineResults = (1 << 0),
-	SavedGifs     = (1 << 1),
+	TabbedPanel   = (1 << 1),
 	Layer         = (1 << 2),
 	RoundPlaying  = (1 << 3),
 	MediaPreview  = (1 << 4),
@@ -193,8 +197,10 @@ public:
 		ResolveType resolveType = ResolveType::Default;
 		QString startToken;
 		ChatAdminRights startAdminRights;
+		bool startAutoSubmit = false;
 		QString attachBotUsername;
 		std::optional<QString> attachBotToggleCommand;
+		InlineBots::PeerTypes attachBotChooseTypes;
 		std::optional<QString> voicechatHash;
 		FullMsgId clickFromMessageId;
 	};
@@ -312,6 +318,10 @@ public:
 	void setConnectingBottomSkip(int skip);
 	rpl::producer<int> connectingBottomSkipValue() const;
 
+	using FileChosen = ChatHelpers::FileChosen;
+	void stickerOrEmojiChosen(FileChosen chosen);
+	[[nodiscard]] rpl::producer<FileChosen> stickerOrEmojiChosen() const;
+
 	QPointer<Ui::BoxContent> show(
 		object_ptr<Ui::BoxContent> content,
 		Ui::LayerOptions options = Ui::LayerOption::KeepOther,
@@ -350,6 +360,7 @@ public:
 		Dialogs::RowDescriptor from = {}) const;
 
 	void showEditPeerBox(PeerData *peer);
+	void showGiftPremiumBox(UserData *user);
 
 	void enableGifPauseReason(GifPauseReason reason);
 	void disableGifPauseReason(GifPauseReason reason);
@@ -376,11 +387,12 @@ public:
 	void resizeForThirdSection();
 	void closeThirdSection();
 
+	[[nodiscard]] bool canShowSeparateWindow(not_null<PeerData*> peer) const;
 	void showPeer(not_null<PeerData*> peer, MsgId msgId = ShowAtUnreadMsgId);
 
 	void startOrJoinGroupCall(
 		not_null<PeerData*> peer,
-		const Calls::StartGroupCallArgs &args);
+		Calls::StartGroupCallArgs args);
 
 	void showSection(
 		std::shared_ptr<SectionMemento> memento,
@@ -473,6 +485,7 @@ public:
 	void setChatStyleTheme(const std::shared_ptr<Ui::ChatTheme> &theme);
 	void clearCachedChatThemes();
 	void pushLastUsedChatTheme(const std::shared_ptr<Ui::ChatTheme> &theme);
+	[[nodiscard]] not_null<Ui::ChatTheme*> currentChatTheme() const;
 
 	void overridePeerTheme(
 		not_null<PeerData*> peer,
@@ -501,6 +514,9 @@ public:
 		return *_cachedReactionIconFactory;
 	}
 
+	void setPremiumRef(const QString &ref);
+	[[nodiscard]] QString premiumRef() const;
+
 	rpl::lifetime &lifetime() {
 		return _lifetime;
 	}
@@ -513,6 +529,7 @@ private:
 	void refreshFiltersMenu();
 	void checkOpenedFilter();
 	void suggestArchiveAndMute();
+	void activateFirstChatsFilter();
 
 	int minimalThreeColumnWidth() const;
 	int countDialogsWidthFromRatio(int bodyWidth) const;
@@ -531,6 +548,7 @@ private:
 	void resetFakeUnreadWhileOpened();
 
 	void checkInvitePeek();
+	void setupPremiumToast();
 
 	void pushDefaultChatBackground();
 	void cacheChatTheme(
@@ -544,6 +562,7 @@ private:
 
 	const not_null<Controller*> _window;
 	const std::unique_ptr<ChatHelpers::EmojiInteractions> _emojiInteractions;
+	const bool _isPrimary = false;
 
 	using SendingAnimation = Ui::MessageSendingAnimationController;
 	const std::unique_ptr<SendingAnimation> _sendingAnimation;
@@ -562,6 +581,7 @@ private:
 	base::Variable<bool> _dialogsListDisplayForced = { false };
 	std::deque<Dialogs::RowDescriptor> _chatEntryHistory;
 	int _chatEntryHistoryPosition = -1;
+	bool _filtersActivated = false;
 	bool _selectingPeer = false;
 
 	base::Timer _invitePeekTimer;
@@ -569,6 +589,8 @@ private:
 	rpl::variable<FilterId> _activeChatsFilter;
 
 	rpl::variable<int> _connectingBottomSkip;
+
+	rpl::event_stream<ChatHelpers::FileChosen> _stickerOrEmojiChosen;
 
 	PeerData *_showEditPeer = nullptr;
 	rpl::variable<Data::Folder*> _openedFolder;
@@ -586,16 +608,27 @@ private:
 	using ReactionIconFactory = HistoryView::Reactions::CachedIconFactory;
 	std::unique_ptr<ReactionIconFactory> _cachedReactionIconFactory;
 
+	GiftPremiumValidator _giftPremiumValidator;
+
+	QString _premiumRef;
+
 	rpl::lifetime _lifetime;
 
 };
 
 void ActivateWindow(not_null<SessionController*> controller);
 
+[[nodiscard]] bool IsPaused(
+	not_null<SessionController*> controller,
+	GifPauseReason level);
+[[nodiscard]] Fn<bool()> PausedIn(
+	not_null<SessionController*> controller,
+	GifPauseReason level);
+
 class Show : public Ui::Show {
 public:
 	explicit Show(not_null<SessionNavigation*> navigation);
-	explicit Show(not_null<Controller*> window);
+	explicit Show(Controller *window);
 	~Show();
 	void showBox(
 		object_ptr<Ui::BoxContent> content,
@@ -604,8 +637,10 @@ public:
 	[[nodiscard]] not_null<QWidget*> toastParent() const override;
 	[[nodiscard]] bool valid() const override;
 	operator bool() const override;
+
 private:
 	const base::weak_ptr<Controller> _window;
+
 };
 
 } // namespace Window

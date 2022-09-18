@@ -19,6 +19,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "boxes/choose_filter_box.h"
 #include "boxes/create_poll_box.h"
 #include "boxes/pin_messages_box.h"
+#include "boxes/premium_limits_box.h"
 #include "boxes/report_messages_box.h"
 #include "boxes/peers/add_bot_to_chat_box.h"
 #include "boxes/peers/add_participants_box.h"
@@ -141,7 +142,7 @@ void PeerMenuAddMuteSubmenuAction(
 			+ Ui::FormatMuteForTiny(peer->notifyMuteUntil().value_or(0)
 				- base::unixtime::now());
 		addAction(text, [=] {
-			peer->owner().notifySettings().update(peer, 0);
+			peer->owner().notifySettings().update(peer, { .unmute = true });
 		}, &st::menuIconUnmute);
 	} else {
 		const auto show = std::make_shared<Window::Show>(controller);
@@ -201,6 +202,7 @@ private:
 	void addNewMembers();
 	void addDeleteContact();
 	void addTTLSubmenu(bool addSeparator);
+	void addGiftPremium();
 
 	not_null<SessionController*> _controller;
 	Dialogs::EntryState _request;
@@ -247,16 +249,13 @@ bool PinnedLimitReached(
 		owner->setChatPinned(wasted, FilterId(), false);
 		owner->setChatPinned(history, FilterId(), true);
 		history->session().api().savePinnedOrder(folder);
-	} else {
-		const auto errorText = filterId
-			? tr::lng_filters_error_pinned_max(tr::now)
-			: tr::lng_error_pinned_max(
-				tr::now,
-				lt_count,
-				owner->pinnedChatsLimit(folder));
+	} else if (filterId) {
 		controller->show(
-			Ui::MakeInformBox(errorText),
-			Ui::LayerOption::CloseOther);
+			Box(FilterPinsLimitBox, &history->session(), filterId));
+	} else if (folder) {
+		controller->show(Box(FolderPinsLimitBox, &history->session()));
+	} else {
+		controller->show(Box(PinsLimitBox, &history->session()));
 	}
 	return true;
 }
@@ -299,10 +298,12 @@ void TogglePinnedDialog(
 
 	// This can happen when you remove this filter from another client.
 	if (!ranges::contains(
-		(&owner->session())->data().chatsFilters().list(),
-		filterId,
-		&Data::ChatFilter::id)) {
-		Ui::Toast::Show(tr::lng_cant_do_this(tr::now));
+			(&owner->session())->data().chatsFilters().list(),
+			filterId,
+			&Data::ChatFilter::id)) {
+		Ui::Toast::Show(
+			Window::Show(controller).toastParent(),
+			tr::lng_cant_do_this(tr::now));
 		return;
 	}
 
@@ -402,9 +403,12 @@ void Filler::addInfo() {
 	if (_peer->isSelf() || _peer->isRepliesChat()) {
 		return;
 	} else if (_controller->adaptive().isThreeColumn()) {
-		if (Core::App().settings().thirdSectionInfoEnabled()
-			|| Core::App().settings().tabbedReplacedWithInfo()) {
-			return;
+		const auto history = _controller->activeChatCurrent().history();
+		if (history && history->peer == _peer) {
+			if (Core::App().settings().thirdSectionInfoEnabled()
+				|| Core::App().settings().tabbedReplacedWithInfo()) {
+				return;
+			}
 		}
 	}
 	const auto controller = _controller;
@@ -420,8 +424,9 @@ void Filler::addInfo() {
 }
 
 void Filler::addToggleFolder() {
+	const auto controller = _controller;
 	const auto history = _request.key.history();
-	if (!history || history->owner().chatsFilters().list().empty()) {
+	if (!history || !history->owner().chatsFilters().has()) {
 		return;
 	}
 	_addAction(PeerMenuCallback::Args{
@@ -429,7 +434,7 @@ void Filler::addToggleFolder() {
 		.handler = nullptr,
 		.icon = &st::menuIconAddToFolder,
 		.fillSubmenu = [=](not_null<Ui::PopupMenu*> menu) {
-			FillChooseFilterMenu(menu, history);
+			FillChooseFilterMenu(controller, menu, history);
 		},
 	});
 }
@@ -602,6 +607,7 @@ void Filler::addViewDiscussion() {
 	_addAction(tr::lng_profile_view_discussion(tr::now), [=] {
 		if (channel->invitePeekExpires()) {
 			Ui::Toast::Show(
+				Window::Show(navigation).toastParent(),
 				tr::lng_channel_invite_private(tr::now));
 			return;
 		}
@@ -685,9 +691,10 @@ void Filler::addBotToGroup() {
 		user
 	) | rpl::take(1) | rpl::start_with_next([=](QString label) {
 		if (!label.isEmpty()) {
+			const auto controller = _controller;
 			_addAction(
 				label,
-				[=] { AddBotToGroupBoxController::Start(user); },
+				[=] { AddBotToGroupBoxController::Start(controller, user); },
 				&st::menuIconInvite);
 		}
 	});
@@ -803,6 +810,24 @@ void Filler::addTTLSubmenu(bool addSeparator) {
 	}
 }
 
+void Filler::addGiftPremium() {
+	const auto user = _peer->asUser();
+	if (!user
+		|| user->isInaccessible()
+		|| user->isSelf()
+		|| user->isBot()
+		|| user->isNotificationsUser()
+		|| !user->canReceiveGifts()
+		|| user->isRepliesChat()) {
+		return;
+	}
+
+	const auto navigation = _controller;
+	_addAction(tr::lng_profile_gift_premium(tr::now), [=] {
+		navigation->showGiftPremiumBox(user);
+	}, &st::menuIconGiftPremium);
+}
+
 void Filler::fill() {
 	if (_folder) {
 		fillArchiveActions();
@@ -859,6 +884,7 @@ void Filler::fillProfileActions() {
 	addNewContact();
 	addShareContact();
 	addEditContact();
+	addGiftPremium();
 	addBotToGroup();
 	addNewMembers();
 	addManageChat();
@@ -895,12 +921,14 @@ void Filler::fillArchiveActions() {
 	}, hidden ? &st::menuIconExpand : &st::menuIconCollapse);
 
 	_addAction(tr::lng_context_archive_to_menu(tr::now), [=] {
-		Ui::Toast::Show(Ui::Toast::Config{
-			.text = { tr::lng_context_archive_to_menu_info(tr::now) },
-			.st = &st::windowArchiveToast,
-			.durationMs = kArchivedToastDuration,
-			.multiline = true,
-		});
+		Ui::Toast::Show(
+			Window::Show(controller).toastParent(),
+			Ui::Toast::Config{
+				.text = { tr::lng_context_archive_to_menu_info(tr::now) },
+				.st = &st::windowArchiveToast,
+				.durationMs = kArchivedToastDuration,
+				.multiline = true,
+			});
 
 		controller->session().settings().setArchiveInMainMenu(
 			!controller->session().settings().archiveInMainMenu());
@@ -925,7 +953,7 @@ void PeerMenuDeleteContact(
 	const auto text = tr::lng_sure_delete_contact(
 		tr::now,
 		lt_contact,
-		user->name);
+		user->name());
 	const auto deleteSure = [=](Fn<void()> &&close) {
 		close();
 		user->session().api().request(MTPcontacts_DeleteContacts(
@@ -959,7 +987,7 @@ void PeerMenuShareContactBox(
 			action.clearDraft = false;
 			user->session().api().shareContact(user, action);
 			Ui::Toast::Show(
-				navigation->parentController()->widget()->bodyWidget(),
+				Window::Show(navigation).toastParent(),
 				tr::lng_share_done(tr::now));
 			if (auto strong = *weak) {
 				strong->closeBox();
@@ -967,8 +995,8 @@ void PeerMenuShareContactBox(
 			return;
 		}
 		auto recipient = peer->isUser()
-			? peer->name
-			: '\xAB' + peer->name + '\xBB';
+			? peer->name()
+			: '\xAB' + peer->name() + '\xBB';
 		navigation->parentController()->show(
 			Ui::MakeConfirmBox({
 				.text = tr::lng_forward_share_contact(
@@ -1039,7 +1067,7 @@ void PeerMenuCreatePoll(
 		const auto api = &peer->session().api();
 		api->polls().create(result.poll, action, crl::guard(weak, [=] {
 			weak->closeBox();
-		}), crl::guard(weak, [=](const MTP::Error &error) {
+		}), crl::guard(weak, [=] {
 			*lock = false;
 			weak->submitFailed(tr::lng_attach_failed(tr::now));
 		}));
@@ -1059,7 +1087,7 @@ void PeerMenuBlockUserBox(
 		: v::get<bool>(suggestReport);
 
 	const auto user = peer->asUser();
-	const auto name = user ? user->shortName() : peer->name;
+	const auto name = user ? user->shortName() : peer->name();
 	if (user) {
 		box->addRow(object_ptr<Ui::FlatLabel>(
 			box,
@@ -1105,7 +1133,7 @@ void PeerMenuBlockUserBox(
 			tr::lng_delete_all_from_user(
 				tr::now,
 				lt_user,
-				Ui::Text::Bold(peer->name),
+				Ui::Text::Bold(peer->name()),
 				Ui::Text::WithEntities),
 			true,
 			st::defaultBoxCheckbox))
@@ -1152,6 +1180,7 @@ void PeerMenuBlockUserBox(
 		}
 
 		Ui::Toast::Show(
+			Window::Show(window).toastParent(),
 			tr::lng_new_contact_block_done(tr::now, lt_user, name));
 	}, st::attentionBoxButton);
 
@@ -1195,7 +1224,9 @@ QPointer<Ui::BoxContent> ShowForwardMessagesBox(
 		navigation
 	](not_null<PeerData*> peer) mutable {
 		const auto content = navigation->parentController()->content();
-		if (peer->isSelf()) {
+		if (peer->isSelf()
+			&& !draft.ids.empty()
+			&& draft.ids.front().peer != peer->id) {
 			const auto history = peer->owner().history(peer);
 			auto resolved = history->resolveForwardDraft(draft);
 			if (!resolved.items.empty()) {
@@ -1260,8 +1291,8 @@ QPointer<Ui::BoxContent> ShowSendNowMessagesBox(
 		TextWithTags());
 	if (!error.isEmpty()) {
 		Ui::ShowMultilineToast({
-			navigation->parentController()->widget()->bodyWidget(),
-			{ error },
+			.parentOverride = Window::Show(navigation).toastParent(),
+			.text = { error },
 		});
 		return { nullptr };
 	}
@@ -1448,7 +1479,7 @@ void PeerMenuAddMuteAction(
 				Box<MuteSettingsBox>(peer),
 				Ui::LayerOption::CloseOther);
 		} else {
-			peer->owner().notifySettings().update(peer, 0);
+			peer->owner().notifySettings().update(peer, { .unmute = true });
 		}
 	}, (peer->owner().notifySettings().isMuted(peer)
 		? &st::menuIconUnmute

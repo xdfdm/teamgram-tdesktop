@@ -36,6 +36,7 @@ namespace Data {
 class Session;
 class DocumentMedia;
 class ReplyPreview;
+enum class StickersType : uchar;
 } // namespace Data
 
 namespace Main {
@@ -73,12 +74,12 @@ struct StickerData : public DocumentAdditionalData {
 	QString alt;
 	StickerSetIdentifier set;
 	StickerType type = StickerType::Webp;
+	Data::StickersType setType = Data::StickersType();
 };
 
 struct SongData : public DocumentAdditionalData {
 	int32 duration = 0;
 	QString title, performer;
-
 };
 
 struct VoiceData : public DocumentAdditionalData {
@@ -116,8 +117,9 @@ public:
 		bool autoLoading = false);
 	void cancel();
 	[[nodiscard]] bool cancelled() const;
+	void resetCancelled();
 	[[nodiscard]] float64 progress() const;
-	[[nodiscard]] int loadOffset() const;
+	[[nodiscard]] int64 loadOffset() const;
 	[[nodiscard]] bool uploading() const;
 	[[nodiscard]] bool loadedInMediaCache() const;
 	void setLoadedInMediaCache(bool loaded);
@@ -151,6 +153,7 @@ public:
 	[[nodiscard]] VoiceData *voice();
 	[[nodiscard]] const VoiceData *voice() const;
 
+	void forceIsStreamedAnimation();
 	[[nodiscard]] bool isVoiceMessage() const;
 	[[nodiscard]] bool isVideoMessage() const;
 	[[nodiscard]] bool isSong() const;
@@ -172,6 +175,8 @@ public:
 	[[nodiscard]] bool isPatternWallPaper() const;
 	[[nodiscard]] bool isPatternWallPaperPNG() const;
 	[[nodiscard]] bool isPatternWallPaperSVG() const;
+	[[nodiscard]] bool isPremiumSticker() const;
+	[[nodiscard]] bool isPremiumEmoji() const;
 
 	[[nodiscard]] bool hasThumbnail() const;
 	[[nodiscard]] bool thumbnailLoading() const;
@@ -190,7 +195,8 @@ public:
 	void updateThumbnails(
 		const InlineImageLocation &inlineThumbnail,
 		const ImageWithLocation &thumbnail,
-		const ImageWithLocation &videoThumbnail);
+		const ImageWithLocation &videoThumbnail,
+		bool isPremiumSticker);
 
 	[[nodiscard]] QByteArray inlineThumbnailBytes() const {
 		return _inlineThumbnailBytes;
@@ -259,11 +265,10 @@ public:
 	[[nodiscard]] bool inappPlaybackFailed() const;
 
 	DocumentId id = 0;
-	DocumentType type = FileDocument;
+	int64 size = 0;
 	QSize dimensions;
 	int32 date = 0;
-	int32 size = 0;
-
+	DocumentType type = FileDocument;
 	FileStatus status = FileReady;
 
 	std::unique_ptr<Data::UploadState> uploadingData;
@@ -279,6 +284,8 @@ private:
 		HasAttachedStickers = 0x040,
 		InlineThumbnailIsPath = 0x080,
 		ForceToCache = 0x100,
+		PremiumSticker = 0x200,
+		PossibleCoverThumbnail = 0x400,
 	};
 	using Flags = base::flags<Flag>;
 	friend constexpr bool is_flag_type(Flag) { return true; };
@@ -319,6 +326,8 @@ private:
 	void destroyLoader();
 
 	bool saveFromDataChecked();
+
+	void refreshPossibleCoverThumbnail();
 
 	const not_null<Data::Session*> _owner;
 

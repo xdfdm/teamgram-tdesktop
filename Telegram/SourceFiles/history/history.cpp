@@ -72,7 +72,7 @@ History::History(not_null<Data::Session*> owner, PeerId peerId)
 , cloudDraftTextCache(st::dialogsTextWidthMin)
 , _delegateMixin(HistoryInner::DelegateMixin())
 , _mute(owner->notifySettings().isMuted(peer))
-, _chatListNameSortKey(owner->nameSortKey(peer->name))
+, _chatListNameSortKey(owner->nameSortKey(peer->name()))
 , _sendActionPainter(this) {
 	if (const auto user = peer->asUser()) {
 		if (user->isBot()) {
@@ -1032,24 +1032,31 @@ void History::applyServiceChanges(
 		}
 	}, [&](const MTPDmessageActionPaymentSent &data) {
 		if (const auto payment = item->Get<HistoryServicePayment>()) {
+			auto paid = std::optional<Payments::PaidInvoice>();
 			if (const auto message = payment->msg) {
 				if (const auto media = message->media()) {
 					if (const auto invoice = media->invoice()) {
-						using Payments::CheckoutProcess;
-						if (CheckoutProcess::TakePaymentStarted(message)) {
-							// Toast on a current active window.
-							Ui::ShowMultilineToast({
-								.text = tr::lng_payments_success(
-									tr::now,
-									lt_amount,
-									Ui::Text::Bold(payment->amount),
-									lt_title,
-									Ui::Text::Bold(invoice->title),
-									Ui::Text::WithEntities),
-							});
-						}
+						paid = Payments::CheckoutProcess::InvoicePaid(
+							message);
 					}
 				}
+			} else if (!payment->slug.isEmpty()) {
+				using Payments::CheckoutProcess;
+				paid = Payments::CheckoutProcess::InvoicePaid(
+					&session(),
+					payment->slug);
+			}
+			if (paid) {
+				// Toast on a current active window.
+				Ui::ShowMultilineToast({
+					.text = tr::lng_payments_success(
+						tr::now,
+						lt_amount,
+						Ui::Text::Bold(payment->amount),
+						lt_title,
+						Ui::Text::Bold(paid->title),
+						Ui::Text::WithEntities),
+				});
 			}
 		}
 	}, [&](const MTPDmessageActionSetChatTheme &data) {
@@ -1816,6 +1823,10 @@ void History::setFolderPointer(Data::Folder *folder) {
 	session().changes().historyUpdated(this, UpdateFlag::Folder);
 }
 
+int History::chatListNameVersion() const {
+	return peer->nameVersion();
+}
+
 void History::applyPinnedUpdate(const MTPDupdateDialogPinned &data) {
 	const auto folderId = data.vfolder_id().value_or_empty();
 	if (!folderKnown()) {
@@ -2027,7 +2038,7 @@ bool History::chatListMessageKnown() const {
 }
 
 const QString &History::chatListName() const {
-	return peer->name;
+	return peer->name();
 }
 
 const QString &History::chatListNameSortKey() const {
@@ -2035,7 +2046,7 @@ const QString &History::chatListNameSortKey() const {
 }
 
 void History::refreshChatListNameSortKey() {
-	_chatListNameSortKey = owner().nameSortKey(peer->name);
+	_chatListNameSortKey = owner().nameSortKey(peer->name());
 }
 
 const base::flat_set<QString> &History::chatListNameWords() const {

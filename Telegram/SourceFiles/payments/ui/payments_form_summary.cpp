@@ -209,7 +209,6 @@ void FormSummary::setupCover(not_null<VerticalLayout*> layout) {
 		FlatLabel *description = nullptr;
 		FlatLabel *seller = nullptr;
 	};
-
 	const auto cover = layout->add(object_ptr<RpWidget>(layout));
 	const auto state = cover->lifetime().make_state<State>();
 	state->title = CreateChild<FlatLabel>(
@@ -218,7 +217,7 @@ void FormSummary::setupCover(not_null<VerticalLayout*> layout) {
 		st::paymentsTitle);
 	state->description = CreateChild<FlatLabel>(
 		cover,
-		_invoice.cover.description,
+		rpl::single(_invoice.cover.description),
 		st::paymentsDescription);
 	state->seller = CreateChild<FlatLabel>(
 		cover,
@@ -360,10 +359,9 @@ void FormSummary::setupPrices(not_null<VerticalLayout*> layout) {
 		const auto text = formatAmount(_invoice.tipsSelected);
 		const auto label = addRow(
 			tr::lng_payments_tips_label(tr::now),
-			Ui::Text::Link(text, "internal:edit_tips"));
-		label->setClickHandlerFilter([=](auto&&...) {
+			Ui::Text::Link(text));
+		label->overrideLinkClickHandler([=] {
 			_delegate->panelChooseTips();
-			return false;
 		});
 		setupSuggestedTips(layout);
 	}
@@ -501,7 +499,9 @@ void FormSummary::setupSections(not_null<VerticalLayout*> layout) {
 	};
 	add(
 		tr::lng_payments_payment_method(),
-		_method.title,
+		(_method.savedMethods.empty()
+			? QString()
+			: _method.savedMethods[_method.savedMethodIndex].title),
 		&st::paymentsIconPaymentMethod,
 		[=] { _delegate->panelEditPaymentMethod(); });
 	if (_invoice.isShippingAddressRequested) {

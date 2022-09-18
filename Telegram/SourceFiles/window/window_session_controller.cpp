@@ -21,9 +21,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "inline_bots/bot_attach_web_view.h"
 #include "history/history.h"
 #include "history/history_item.h"
+#include "history/view/reactions/history_view_reactions.h"
+#include "history/view/reactions/history_view_reactions_button.h"
 #include "history/view/history_view_replies_section.h"
-#include "history/view/history_view_react_button.h"
-#include "history/view/history_view_reactions.h"
 #include "history/view/history_view_scheduled_section.h"
 #include "media/player/media_player_instance.h"
 #include "media/view/media_view_open_common.h"
@@ -40,6 +40,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_changes.h"
 #include "data/data_group_call.h"
 #include "data/data_chat_filters.h"
+#include "data/data_peer_values.h"
 #include "passport/passport_form_controller.h"
 #include "chat_helpers/tabbed_selector.h"
 #include "chat_helpers/emoji_interactions.h"
@@ -72,6 +73,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "apiwrap.h"
 #include "api/api_chat_invite.h"
 #include "api/api_global_privacy.h"
+#include "api/api_blocked_peers.h"
 #include "support/support_helper.h"
 #include "storage/file_upload.h"
 #include "facades.h"
@@ -142,6 +144,18 @@ void ActivateWindow(not_null<SessionController*> controller) {
 	Ui::ActivateWindowDelayed(window);
 }
 
+bool IsPaused(
+		not_null<SessionController*> controller,
+		GifPauseReason level) {
+	return controller->isGifPausedAtLeastFor(level);
+}
+
+Fn<bool()> PausedIn(
+		not_null<SessionController*> controller,
+		GifPauseReason level) {
+	return [=] { return IsPaused(controller, level); };
+}
+
 bool operator==(const PeerThemeOverride &a, const PeerThemeOverride &b) {
 	return (a.peer == b.peer) && (a.theme == b.theme);
 }
@@ -185,7 +199,14 @@ void SessionNavigation::showPeerByLink(const PeerByLinkInfo &info) {
 		});
 	} else if (const auto name = std::get_if<QString>(&info.usernameOrId)) {
 		resolveUsername(*name, [=](not_null<PeerData*> peer) {
-			showPeerByLinkResolved(peer, info);
+			if (info.startAutoSubmit) {
+				peer->session().api().blockedPeers().unblock(
+					peer,
+					[=] { showPeerByLinkResolved(peer, info); },
+					true);
+			} else {
+				showPeerByLinkResolved(peer, info);
+			}
 		});
 	} else if (const auto id = std::get_if<ChannelId>(&info.usernameOrId)) {
 		resolveChannelById(*id, [=](not_null<ChannelData*> channel) {
@@ -209,10 +230,12 @@ void SessionNavigation::resolvePhone(
 	}).fail([=](const MTP::Error &error) {
 		_resolveRequestId = 0;
 		if (error.code() == 400) {
-			show(Ui::MakeInformBox(tr::lng_username_by_phone_not_found(
-				tr::now,
-				lt_phone,
-				Ui::FormatPhone(phone))));
+			parentController()->show(
+				Ui::MakeInformBox(tr::lng_username_by_phone_not_found(
+					tr::now,
+					lt_phone,
+					Ui::FormatPhone(phone))),
+				Ui::LayerOption::CloseOther);
 		}
 	}).send();
 }
@@ -232,8 +255,10 @@ void SessionNavigation::resolveUsername(
 	}).fail([=](const MTP::Error &error) {
 		_resolveRequestId = 0;
 		if (error.code() == 400) {
-			show(Ui::MakeInformBox(
-				tr::lng_username_not_found(tr::now, lt_user, username)));
+			parentController()->show(
+				Ui::MakeInformBox(
+					tr::lng_username_not_found(tr::now, lt_user, username)),
+				Ui::LayerOption::CloseOther);
 		}
 	}).send();
 }
@@ -242,7 +267,7 @@ void SessionNavigation::resolveDone(
 		const MTPcontacts_ResolvedPeer &result,
 		Fn<void(not_null<PeerData*>)> done) {
 	_resolveRequestId = 0;
-	Ui::hideLayer();
+	parentController()->hideLayer();
 	result.match([&](const MTPDcontacts_resolvedPeer &data) {
 		_session->data().processUsers(data.vusers());
 		_session->data().processChats(data.vchats());
@@ -261,8 +286,9 @@ void SessionNavigation::resolveChannelById(
 	}
 	const auto fail = [=] {
 		Ui::ShowMultilineToast({
+			.parentOverride = Window::Show(this).toastParent(),
 			.text = { tr::lng_error_post_link_invalid(tr::now) }
-			});
+		});
 	};
 	_api.request(base::take(_resolveRequestId)).cancel();
 	_resolveRequestId = _api.request(MTPchannels_GetChannels(
@@ -330,6 +356,7 @@ void SessionNavigation::showPeerByLinkResolved(
 		Assert(scope != Scope::None);
 
 		AddBotToGroupBoxController::Start(
+			parentController(),
 			bot,
 			scope,
 			info.startToken,
@@ -346,6 +373,8 @@ void SessionNavigation::showPeerByLinkResolved(
 		// Show specific posts only in channels / supergroups.
 		const auto msgId = peer->isChannel()
 			? info.messageId
+			: info.startAutoSubmit
+			? ShowAndStartBotMsgId
 			: ShowAtUnreadMsgId;
 		const auto attachBotUsername = info.attachBotUsername;
 		if (bot && bot->botInfo->startToken != info.startToken) {
@@ -374,7 +403,9 @@ void SessionNavigation::showPeerByLinkResolved(
 			bot->session().attachWebView().requestAddToMenu(
 				contextUser,
 				bot,
-				*info.attachBotToggleCommand);
+				*info.attachBotToggleCommand,
+				parentController(),
+				info.attachBotChooseTypes);
 		} else {
 			crl::on_main(this, [=] {
 				showPeerHistory(peer->id, params, msgId);
@@ -390,6 +421,7 @@ void SessionNavigation::joinVoiceChatFromLink(
 
 	const auto bad = [=] {
 		Ui::ShowMultilineToast({
+			.parentOverride = Window::Show(this).toastParent(),
 			.text = { tr::lng_group_invite_bad_link(tr::now) }
 		});
 	};
@@ -418,8 +450,7 @@ void SessionNavigation::joinVoiceChatFromLink(
 		_resolveRequestId = _api.request(
 			MTPphone_GetGroupCall(call->input(), MTP_int(limit))
 		).done([=](const MTPphone_GroupCall &result) {
-			if (const auto now = peer->groupCall()
-				; now && now->id() == id) {
+			if (const auto now = peer->groupCall(); now && now->id() == id) {
 				if (!now->loaded()) {
 					now->processFullCall(result);
 				}
@@ -515,7 +546,9 @@ void SessionNavigation::showRepliesForMessage(
 		_showingRepliesRequestId = 0;
 		if (error.type() == u"CHANNEL_PRIVATE"_q
 			|| error.type() == u"USER_BANNED_IN_CHANNEL"_q) {
-			Ui::Toast::Show(tr::lng_group_not_accessible(tr::now));
+			Ui::Toast::Show(
+				Show(this).toastParent(),
+				tr::lng_group_not_accessible(tr::now));
 		}
 	}).send();
 }
@@ -593,16 +626,20 @@ SessionController::SessionController(
 , _window(window)
 , _emojiInteractions(
 	std::make_unique<ChatHelpers::EmojiInteractions>(session))
+, _isPrimary(window->isPrimary())
 , _sendingAnimation(
 	std::make_unique<Ui::MessageSendingAnimationController>(this))
 , _tabbedSelector(
 	std::make_unique<ChatHelpers::TabbedSelector>(
 		_window->widget(),
-		this))
+		this,
+		GifPauseReason::TabbedPanel))
 , _invitePeekTimer([=] { checkInvitePeek(); })
+, _activeChatsFilter(session->data().chatsFilters().defaultId())
 , _defaultChatTheme(std::make_shared<Ui::ChatTheme>())
 , _chatStyle(std::make_unique<Ui::ChatStyle>())
-, _cachedReactionIconFactory(std::make_unique<ReactionIconFactory>()) {
+, _cachedReactionIconFactory(std::make_unique<ReactionIconFactory>())
+, _giftPremiumValidator(GiftPremiumValidator(this)) {
 	init();
 
 	_chatStyleTheme = _defaultChatTheme;
@@ -657,6 +694,11 @@ SessionController::SessionController(
 	}, _lifetime);
 
 	session->addWindow(this);
+
+	crl::on_main(this, [=] {
+		activateFirstChatsFilter();
+		setupPremiumToast();
+	});
 }
 
 void SessionController::suggestArchiveAndMute() {
@@ -689,7 +731,7 @@ PeerData *SessionController::singlePeer() const {
 }
 
 bool SessionController::isPrimary() const {
-	return _window->isPrimary();
+	return _isPrimary;
 }
 
 not_null<::MainWindow*> SessionController::widget() const {
@@ -728,6 +770,14 @@ void SessionController::showEditPeerBox(PeerData *peer) {
 	session().api().requestFullPeer(peer);
 }
 
+void SessionController::showGiftPremiumBox(UserData *user) {
+	if (user) {
+		_giftPremiumValidator.showBox(user);
+	} else {
+		_giftPremiumValidator.cancel();
+	}
+}
+
 void SessionController::init() {
 	if (session().supportMode()) {
 		initSupportMode();
@@ -738,7 +788,9 @@ void SessionController::initSupportMode() {
 	session().supportHelper().registerWindow(this);
 
 	Shortcuts::Requests(
-	) | rpl::start_with_next([=](not_null<Shortcuts::Request*> request) {
+	) | rpl::filter([=] {
+		return (Core::App().activeWindow() == &window());
+	}) | rpl::start_with_next([=](not_null<Shortcuts::Request*> request) {
 		using C = Shortcuts::Command;
 
 		request->check(C::SupportHistoryBack) && request->handle([=] {
@@ -751,7 +803,7 @@ void SessionController::initSupportMode() {
 }
 
 void SessionController::toggleFiltersMenu(bool enabled) {
-	if (!isPrimary() || (!enabled == !_filters)) {
+	if (!_isPrimary || (!enabled == !_filters)) {
 		return;
 	} else if (enabled) {
 		_filters = std::make_unique<FiltersMenu>(
@@ -764,7 +816,7 @@ void SessionController::toggleFiltersMenu(bool enabled) {
 }
 
 void SessionController::refreshFiltersMenu() {
-	toggleFiltersMenu(!session().data().chatsFilters().list().empty());
+	toggleFiltersMenu(session().data().chatsFilters().has());
 }
 
 rpl::producer<> SessionController::filtersMenuChanged() const {
@@ -772,6 +824,7 @@ rpl::producer<> SessionController::filtersMenuChanged() const {
 }
 
 void SessionController::checkOpenedFilter() {
+	activateFirstChatsFilter();
 	if (const auto filterId = activeChatsFilterCurrent()) {
 		const auto &list = session().data().chatsFilters().list();
 		const auto i = ranges::find(list, filterId, &Data::ChatFilter::id);
@@ -779,6 +832,14 @@ void SessionController::checkOpenedFilter() {
 			setActiveChatsFilter(0);
 		}
 	}
+}
+
+void SessionController::activateFirstChatsFilter() {
+	if (_filtersActivated || !session().data().chatsFilters().loaded()) {
+		return;
+	}
+	_filtersActivated = true;
+	setActiveChatsFilter(session().data().chatsFilters().defaultId());
 }
 
 bool SessionController::uniqueChatsInSearchResults() const {
@@ -797,6 +858,31 @@ void SessionController::openFolder(not_null<Data::Folder*> folder) {
 
 void SessionController::closeFolder() {
 	_openedFolder = nullptr;
+}
+
+void SessionController::setupPremiumToast() {
+	rpl::combine(
+		Data::AmPremiumValue(&session()),
+		session().changes().peerUpdates(
+			Data::PeerUpdate::Flag::FullInfo
+		)
+	) | rpl::filter([=] {
+		return session().user()->isFullLoaded();
+	}) | rpl::map([=](bool premium, const auto&) {
+		return premium;
+	}) | rpl::distinct_until_changed() | rpl::skip(
+		1
+	) | rpl::filter([=](bool premium) {
+		session().mtp().requestConfig();
+		return premium;
+	}) | rpl::start_with_next([=] {
+		Ui::Toast::Show(
+			Window::Show(this).toastParent(),
+			{
+				.text = { tr::lng_premium_success(tr::now) },
+				.st = &st::defaultToast,
+			});
+	}, _lifetime);
 }
 
 const rpl::variable<Data::Folder*> &SessionController::openedFolder() const {
@@ -965,7 +1051,7 @@ int SessionController::dialogsSmallColumnWidth() const {
 }
 
 int SessionController::minimalThreeColumnWidth() const {
-	return st::columnMinimalWidthLeft
+	return (_isPrimary ? st::columnMinimalWidthLeft : 0)
 		+ st::columnMinimalWidthMain
 		+ st::columnMinimalWidthThird;
 }
@@ -988,7 +1074,7 @@ auto SessionController::computeColumnLayout() const -> ColumnLayout {
 	auto useOneColumnLayout = [&] {
 		auto minimalNormal = st::columnMinimalWidthLeft
 			+ st::columnMinimalWidthMain;
-		if (bodyWidth < minimalNormal) {
+		if (_isPrimary && bodyWidth < minimalNormal) {
 			return true;
 		}
 		return false;
@@ -1030,6 +1116,9 @@ auto SessionController::computeColumnLayout() const -> ColumnLayout {
 }
 
 int SessionController::countDialogsWidthFromRatio(int bodyWidth) const {
+	if (!_isPrimary) {
+		return 0;
+	}
 	auto result = qRound(bodyWidth * Core::App().settings().dialogsWidthRatio());
 	accumulate_max(result, st::columnMinimalWidthLeft);
 //	accumulate_min(result, st::columnMaximalWidthLeft);
@@ -1058,8 +1147,8 @@ SessionController::ShrinkResult SessionController::shrinkDialogsAndThirdColumns(
 	if (thirdWidthNew < st::columnMinimalWidthThird) {
 		thirdWidthNew = st::columnMinimalWidthThird;
 		dialogsWidthNew = bodyWidth - thirdWidthNew - chatWidth;
-		Assert(dialogsWidthNew >= st::columnMinimalWidthLeft);
-	} else if (dialogsWidthNew < st::columnMinimalWidthLeft) {
+		Assert(!_isPrimary || dialogsWidthNew >= st::columnMinimalWidthLeft);
+	} else if (_isPrimary && dialogsWidthNew < st::columnMinimalWidthLeft) {
 		dialogsWidthNew = st::columnMinimalWidthLeft;
 		thirdWidthNew = bodyWidth - dialogsWidthNew - chatWidth;
 		Assert(thirdWidthNew >= st::columnMinimalWidthThird);
@@ -1164,6 +1253,11 @@ void SessionController::closeThirdSection() {
 	}
 }
 
+bool SessionController::canShowSeparateWindow(
+		not_null<PeerData*> peer) const {
+	return peer->computeUnavailableReason().isEmpty();
+}
+
 void SessionController::showPeer(not_null<PeerData*> peer, MsgId msgId) {
 	const auto currentPeer = activeChatCurrent().peer();
 	if (peer && peer->isChannel() && currentPeer != peer) {
@@ -1174,6 +1268,7 @@ void SessionController::showPeer(not_null<PeerData*> peer, MsgId msgId) {
 				|| currentPeer->asChannel()->linkedChat()
 					!= clickedChannel)) {
 			Ui::ShowMultilineToast({
+				.parentOverride = Window::Show(this).toastParent(),
 				.text = {
 					.text = peer->isMegagroup()
 						? tr::lng_group_not_accessible(tr::now)
@@ -1190,48 +1285,11 @@ void SessionController::showPeer(not_null<PeerData*> peer, MsgId msgId) {
 
 void SessionController::startOrJoinGroupCall(
 		not_null<PeerData*> peer,
-		const Calls::StartGroupCallArgs &args) {
-	using JoinConfirm = Calls::StartGroupCallArgs::JoinConfirm;
-	auto &calls = Core::App().calls();
-	const auto askConfirmation = [&](QString text, QString button) {
-		show(Ui::MakeConfirmBox({
-			.text = text,
-			.confirmed = crl::guard(this, [=, hash = args.joinHash] {
-				Ui::hideLayer();
-				startOrJoinGroupCall(peer, { hash, JoinConfirm::None });
-			}),
-			.confirmText = button,
-		}));
-	};
-	if (args.confirm != JoinConfirm::None && calls.inCall()) {
-		// Do you want to leave your active voice chat
-		// to join a voice chat in this group?
-		askConfirmation(
-			(peer->isBroadcast()
-				? tr::lng_call_leave_to_other_sure_channel
-				: tr::lng_call_leave_to_other_sure)(tr::now),
-			tr::lng_call_bar_hangup(tr::now));
-	} else if (args.confirm != JoinConfirm::None
-		&& calls.inGroupCall()) {
-		const auto now = calls.currentGroupCall()->peer();
-		if (now == peer) {
-			calls.activateCurrentCall(args.joinHash);
-		} else if (calls.currentGroupCall()->scheduleDate()) {
-			calls.startOrJoinGroupCall(peer, { args.joinHash });
-		} else {
-			askConfirmation(
-				((peer->isBroadcast() && now->isBroadcast())
-					? tr::lng_group_call_leave_channel_to_other_sure_channel
-					: now->isBroadcast()
-					? tr::lng_group_call_leave_channel_to_other_sure
-					: peer->isBroadcast()
-					? tr::lng_group_call_leave_to_other_sure_channel
-					: tr::lng_group_call_leave_to_other_sure)(tr::now),
-				tr::lng_group_call_leave(tr::now));
-		}
-	} else {
-		calls.startOrJoinGroupCall(peer, args);
-	}
+		Calls::StartGroupCallArgs args) {
+	Core::App().calls().startOrJoinGroupCall(
+		std::make_shared<Show>(this),
+		peer,
+		args);
 }
 
 void SessionController::showCalendar(Dialogs::Key chat, QDate requestedDate) {
@@ -1353,12 +1411,19 @@ void SessionController::showCalendar(Dialogs::Key chat, QDate requestedDate) {
 			button->setPointerCursor(false);
 		}
 	};
+	const auto weak = base::make_weak(this);
+	const auto jump = [=](const QDate &date) {
+		const auto open = [=](not_null<PeerData*> peer, MsgId id) {
+			if (const auto strong = weak.get()) {
+				strong->showPeerHistory(peer, SectionShow::Way::Forward, id);
+			}
+		};
+		session().api().resolveJumpToDate(chat, date, open);
+	};
 	show(Box<Ui::CalendarBox>(Ui::CalendarBoxArgs{
 		.month = highlighted,
 		.highlighted = highlighted,
-		.callback = [=](const QDate &date) {
-			session().api().jumpToDate(chat, date);
-		},
+		.callback = [=](const QDate &date) { jump(date); },
 		.minDate = minPeerDate,
 		.maxDate = maxPeerDate,
 		.allowsSelection = history->peer->isUser(),
@@ -1407,7 +1472,8 @@ void SessionController::showPeerHistoryAtItem(
 		not_null<const HistoryItem*> item) {
 	_window->invokeForSessionController(
 		&item->history()->peer->session().account(),
-		[=](not_null<SessionController*> controller) {
+		item->history()->peer,
+		[&](not_null<SessionController*> controller) {
 			if (item->isScheduled()) {
 				controller->showSection(
 					std::make_shared<HistoryView::ScheduledMemento>(
@@ -1545,6 +1611,15 @@ rpl::producer<int> SessionController::connectingBottomSkipValue() const {
 	return _connectingBottomSkip.value();
 }
 
+void SessionController::stickerOrEmojiChosen(FileChosen chosen) {
+	_stickerOrEmojiChosen.fire(std::move(chosen));
+}
+
+auto SessionController::stickerOrEmojiChosen() const
+-> rpl::producer<FileChosen> {
+	return _stickerOrEmojiChosen.events();
+}
+
 QPointer<Ui::BoxContent> SessionController::show(
 		object_ptr<Ui::BoxContent> content,
 		Ui::LayerOptions options,
@@ -1553,7 +1628,7 @@ QPointer<Ui::BoxContent> SessionController::show(
 }
 
 void SessionController::hideLayer(anim::type animated) {
-	show({ nullptr }, Ui::LayerOption::CloseOther, animated);
+	_window->hideLayer(animated);
 }
 
 void SessionController::openPhoto(
@@ -1638,6 +1713,13 @@ void SessionController::pushLastUsedChatTheme(
 	} else if (i != begin(_lastUsedCustomChatThemes)) {
 		std::rotate(begin(_lastUsedCustomChatThemes), i, i + 1);
 	}
+}
+
+not_null<Ui::ChatTheme*> SessionController::currentChatTheme() const {
+	if (const auto custom = content()->customChatTheme()) {
+		return custom;
+	}
+	return defaultChatTheme().get();
 }
 
 void SessionController::setChatStyleTheme(
@@ -1836,7 +1918,16 @@ HistoryView::PaintContext SessionController::preparePaintContext(
 	return args.theme->preparePaintContext(
 		_chatStyle.get(),
 		viewport,
-		args.clip);
+		args.clip,
+		isGifPausedAtLeastFor(GifPauseReason::Any));
+}
+
+void SessionController::setPremiumRef(const QString &ref) {
+	_premiumRef = ref;
+}
+
+QString SessionController::premiumRef() const {
+	return _premiumRef;
 }
 
 SessionController::~SessionController() {
@@ -1847,8 +1938,8 @@ Show::Show(not_null<SessionNavigation*> navigation)
 : Show(&navigation->parentController()->window()) {
 }
 
-Show::Show(not_null<Controller*> window)
-: _window(base::make_weak(window.get())) {
+Show::Show(Controller *window)
+: _window(base::make_weak(window)) {
 }
 
 Show::~Show() = default;

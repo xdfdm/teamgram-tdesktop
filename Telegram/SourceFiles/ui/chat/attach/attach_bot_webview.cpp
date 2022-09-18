@@ -15,34 +15,42 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/separate_panel.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
+#include "ui/widgets/menu/menu_add_action_callback.h"
 #include "ui/wrap/fade_wrap.h"
+#include "ui/integration.h"
 #include "lang/lang_keys.h"
 #include "webview/webview_embed.h"
+#include "webview/webview_dialog.h"
 #include "webview/webview_interface.h"
 #include "base/debug_log.h"
+#include "base/invoke_queued.h"
 #include "styles/style_payments.h"
 #include "styles/style_layers.h"
-
-#include "base/timer_rpl.h"
+#include "styles/style_menu_icons.h"
 
 #include <QtCore/QJsonDocument>
 #include <QtCore/QJsonObject>
 #include <QtCore/QJsonArray>
+#include <QtGui/QDesktopServices>
 
 namespace Ui::BotWebView {
 namespace {
 
+constexpr auto kProcessClickTimeout = crl::time(1000);
 constexpr auto kProgressDuration = crl::time(200);
 constexpr auto kProgressOpacity = 0.3;
 constexpr auto kLightnessThreshold = 128;
 constexpr auto kLightnessDelta = 32;
 
 [[nodiscard]] QJsonObject ParseMethodArgs(const QString &json) {
+	if (json.isEmpty()) {
+		return {};
+	}
 	auto error = QJsonParseError();
 	const auto dictionary = QJsonDocument::fromJson(json.toUtf8(), &error);
 	if (error.error != QJsonParseError::NoError) {
 		LOG(("BotWebView Error: Could not parse \"%1\".").arg(json));
-		return QJsonObject();
+		return {};
 	}
 	return dictionary.object();
 }
@@ -83,6 +91,30 @@ constexpr auto kLightnessDelta = 32;
 			? kLightnessDelta
 			: -kLightnessDelta),
 		alpha);
+}
+
+[[nodiscard]] QString EncodeForJs(const QString &text) {
+	auto result = QString();
+	for (auto ch = text.data(), e = ch + text.size(); ch != e; ++ch) {
+		const auto code = ch->unicode();
+		const auto hex = [&](int value) {
+			const auto v = value & 0x0F;
+			return QChar((v < 10) ? ('0' + v) : 'A' + (v - 10));
+		};
+		if (code >= 32 && code < 128) {
+			if (code == '\\' || code == '"' || code == '\'') {
+				result += QChar('\\');
+			}
+			result += *ch;
+		} else {
+			result += u"\\u"_q
+				+ hex(code >> 12)
+				+ hex(code >> 8)
+				+ hex(code >> 4)
+				+ hex(code);
+		}
+	}
+	return result;
 }
 
 } // namespace
@@ -305,22 +337,43 @@ Panel::Panel(
 	const QString &userDataPath,
 	rpl::producer<QString> title,
 	Fn<bool(QString)> handleLocalUri,
+	Fn<void(QString)> handleInvoice,
 	Fn<void(QByteArray)> sendData,
 	Fn<void()> close,
+	QString phone,
+	MenuButtons menuButtons,
+	Fn<void(MenuButton)> handleMenuButton,
 	Fn<Webview::ThemeParams()> themeParams)
 : _userDataPath(userDataPath)
 , _handleLocalUri(std::move(handleLocalUri))
+, _handleInvoice(std::move(handleInvoice))
 , _sendData(std::move(sendData))
 , _close(std::move(close))
+, _phone(phone)
+, _menuButtons(menuButtons)
+, _handleMenuButton(std::move(handleMenuButton))
 , _widget(std::make_unique<SeparatePanel>()) {
 	_widget->setInnerSize(st::paymentsPanelSize);
 	_widget->setWindowFlag(Qt::WindowStaysOnTopHint, false);
 
 	_widget->closeRequests(
-	) | rpl::start_with_next(_close, _widget->lifetime());
+	) | rpl::start_with_next([=] {
+		if (_closeNeedConfirmation) {
+			scheduleCloseWithConfirmation();
+		} else {
+			_close();
+		}
+	}, _widget->lifetime());
 
 	_widget->closeEvents(
-	) | rpl::start_with_next(_close, _widget->lifetime());
+	) | rpl::filter([=] {
+		return !_hiddenForPayment;
+	}) | rpl::start_with_next(_close, _widget->lifetime());
+
+	_widget->backRequests(
+	) | rpl::start_with_next([=] {
+		postEvent("back_button_pressed");
+	}, _widget->lifetime());
 
 	rpl::combine(
 		style::PaletteChanged(),
@@ -496,6 +549,32 @@ bool Panel::showWebview(
 		label->show();
 		_webviewBottom->resize(_webviewBottom->width(), height);
 	}
+	_widget->setMenuAllowed([=](const Ui::Menu::MenuCallback &callback) {
+		if (_menuButtons & MenuButton::Settings) {
+			callback(tr::lng_bot_settings(tr::now), [=] {
+				postEvent("settings_button_pressed");
+			}, &st::menuIconSettings);
+		}
+		if (_menuButtons & MenuButton::OpenBot) {
+			callback(tr::lng_bot_open(tr::now), [=] {
+				_handleMenuButton(MenuButton::OpenBot);
+			}, &st::menuIconLeave);
+		}
+		callback(tr::lng_bot_reload_page(tr::now), [=] {
+			_webview->window.reload();
+		}, &st::menuIconRestore);
+		if (_menuButtons & MenuButton::RemoveFromMenu) {
+			const auto handler = [=] {
+				_handleMenuButton(MenuButton::RemoveFromMenu);
+			};
+			callback({
+				.text = tr::lng_bot_remove_from_menu(tr::now),
+				.handler = handler,
+				.icon = &st::menuIconDeleteAttention,
+				.isAttention = true,
+			});
+		}
+	});
 	return true;
 }
 
@@ -560,14 +639,29 @@ bool Panel::createWebview() {
 		}
 		const auto list = message.array();
 		const auto command = list.at(0).toString();
+		const auto arguments = ParseMethodArgs(list.at(1).toString());
 		if (command == "web_app_close") {
 			_close();
 		} else if (command == "web_app_data_send") {
-			sendDataMessage(list.at(1));
+			sendDataMessage(arguments);
 		} else if (command == "web_app_setup_main_button") {
-			processMainButtonMessage(list.at(1));
+			processMainButtonMessage(arguments);
+		} else if (command == "web_app_setup_back_button") {
+			processBackButtonMessage(arguments);
 		} else if (command == "web_app_request_theme") {
 			_themeUpdateForced.fire({});
+		} else if (command == "web_app_open_tg_link") {
+			openTgLink(arguments);
+		} else if (command == "web_app_open_link") {
+			openExternalLink(arguments);
+		} else if (command == "web_app_open_invoice") {
+			openInvoice(arguments);
+		} else if (command == "web_app_open_popup") {
+			openPopup(arguments);
+		} else if (command == "web_app_request_phone") {
+			requestPhone();
+		} else if (command == "web_app_setup_closing_behavior") {
+			setupClosingBehaviour(arguments);
 		}
 	});
 
@@ -602,25 +696,199 @@ void Panel::setTitle(rpl::producer<QString> title) {
 	_widget->setTitle(std::move(title));
 }
 
-void Panel::sendDataMessage(const QJsonValue &value) {
-	const auto json = value.toString();
-	const auto args = ParseMethodArgs(json);
+void Panel::sendDataMessage(const QJsonObject &args) {
 	if (args.isEmpty()) {
 		_close();
 		return;
 	}
 	const auto data = args["data"].toString();
 	if (data.isEmpty()) {
-		LOG(("BotWebView Error: Bad data \"%1\".").arg(json));
+		LOG(("BotWebView Error: Bad 'data' in sendDataMessage."));
 		_close();
 		return;
 	}
 	_sendData(data.toUtf8());
 }
 
-void Panel::processMainButtonMessage(const QJsonValue &value) {
-	const auto json = value.toString();
-	const auto args = ParseMethodArgs(json);
+void Panel::openTgLink(const QJsonObject &args) {
+	if (args.isEmpty()) {
+		_close();
+		return;
+	}
+	const auto path = args["path_full"].toString();
+	if (path.isEmpty()) {
+		LOG(("BotWebView Error: Bad 'path_full' in openTgLink."));
+		_close();
+		return;
+	}
+	_handleLocalUri("https://t.me" + path);
+}
+
+void Panel::openExternalLink(const QJsonObject &args) {
+	if (args.isEmpty()) {
+		_close();
+		return;
+	}
+	const auto url = args["url"].toString();
+	const auto lower = url.toLower();
+	if (url.isEmpty()
+		|| (!lower.startsWith("http://") && !lower.startsWith("https://"))) {
+		LOG(("BotWebView Error: Bad 'url' in openExternalLink."));
+		_close();
+		return;
+	}
+	const auto now = crl::now();
+	if (_mainButtonLastClick
+		&& _mainButtonLastClick + kProcessClickTimeout >= now) {
+		_mainButtonLastClick = 0;
+		QDesktopServices::openUrl(url);
+	} else {
+		const auto string = EncodeForJs(url);
+		_webview->window.eval(("window.open(\"" + string + "\");").toUtf8());
+	}
+}
+
+void Panel::openInvoice(const QJsonObject &args) {
+	if (args.isEmpty()) {
+		_close();
+		return;
+	}
+	const auto slug = args["slug"].toString();
+	if (slug.isEmpty()) {
+		LOG(("BotWebView Error: Bad 'slug' in openInvoice."));
+		_close();
+		return;
+	}
+	_handleInvoice(slug);
+}
+
+void Panel::openPopup(const QJsonObject &args) {
+	if (args.isEmpty()) {
+		_close();
+		return;
+	}
+	using Button = Webview::PopupArgs::Button;
+	using Type = Button::Type;
+	const auto message = args["message"].toString();
+	const auto types = base::flat_map<QString, Button::Type>{
+		{ "default", Type::Default },
+		{ "ok", Type::Ok },
+		{ "close", Type::Close },
+		{ "cancel", Type::Cancel },
+		{ "destructive", Type::Destructive },
+	};
+	auto buttons = std::vector<Webview::PopupArgs::Button>();
+	for (const auto button : args["buttons"].toArray()) {
+		const auto fields = button.toObject();
+		const auto i = types.find(fields["type"].toString());
+		if (i == end(types)) {
+			LOG(("BotWebView Error: Bad 'type' in openPopup buttons."));
+			_close();
+			return;
+		}
+		buttons.push_back({
+			.id = fields["id"].toString(),
+			.text = fields["text"].toString(),
+			.type = i->second,
+		});
+	}
+	if (message.isEmpty()) {
+		LOG(("BotWebView Error: Bad 'message' in openPopup."));
+		_close();
+		return;
+	} else if (buttons.empty()) {
+		LOG(("BotWebView Error: Bad 'buttons' in openPopup."));
+		_close();
+		return;
+	}
+	const auto widget = _webview->window.widget();
+	const auto weak = base::make_weak(this);
+	const auto result = Webview::ShowBlockingPopup({
+		.parent = widget ? widget->window() : nullptr,
+		.title = args["title"].toString(),
+		.text = message,
+		.buttons = std::move(buttons),
+	});
+	if (weak) {
+		const auto safe = [&] {
+			return QJsonDocument(
+				QJsonArray{ { QJsonValue(*result.id) } }
+			).toJson(QJsonDocument::Compact) + "[0]";
+		};
+		postEvent(
+			"popup_closed",
+			result.id ? ("\"button_id\": " + safe()) : QString());
+	}
+}
+
+void Panel::requestPhone() {
+#if 0 // disabled for now
+	using Button = Webview::PopupArgs::Button;
+	const auto widget = _webview->window.widget();
+	const auto weak = base::make_weak(this);
+	const auto integration = &Ui::Integration::Instance();
+	const auto result = Webview::ShowBlockingPopup({
+		.parent = widget ? widget->window() : nullptr,
+		.title = integration->phraseBotSharePhoneTitle(),
+		.text = integration->phraseBotSharePhone(),
+		.buttons = {
+			{
+				.id = "share",
+				.text = integration->phraseBotSharePhoneConfirm(),
+			},
+			{.id = "cancel", .type = Button::Type::Cancel },
+		},
+	});
+	if (weak) {
+		postEvent(
+			"phone_requested",
+			(result.id == "share"
+				? "\"phone_number\": \"" + _phone + "\""
+				: QString()));
+	}
+#endif
+}
+
+void Panel::scheduleCloseWithConfirmation() {
+	if (!_closeWithConfirmationScheduled) {
+		_closeWithConfirmationScheduled = true;
+		InvokeQueued(_widget.get(), [=] { closeWithConfirmation(); });
+	}
+}
+
+void Panel::closeWithConfirmation() {
+	using Button = Webview::PopupArgs::Button;
+	const auto widget = _webview->window.widget();
+	const auto weak = base::make_weak(this);
+	const auto integration = &Ui::Integration::Instance();
+	const auto result = Webview::ShowBlockingPopup({
+		.parent = widget ? widget->window() : nullptr,
+		.title = integration->phrasePanelCloseWarning(),
+		.text = integration->phrasePanelCloseUnsaved(),
+		.buttons = {
+			{
+				.id = "close",
+				.text = integration->phrasePanelCloseAnyway(),
+				.type = Button::Type::Destructive,
+			},
+			{ .id = "cancel", .type = Button::Type::Cancel },
+		},
+		.ignoreFloodCheck = true,
+	});
+	if (!weak) {
+		return;
+	} else if (result.id != "cancel") {
+		_close();
+	} else {
+		_closeWithConfirmationScheduled = false;
+	}
+}
+
+void Panel::setupClosingBehaviour(const QJsonObject &args) {
+	_closeNeedConfirmation = args["need_confirmation"].toBool();
+}
+
+void Panel::processMainButtonMessage(const QJsonObject &args) {
 	if (args.isEmpty()) {
 		_close();
 		return;
@@ -664,6 +932,10 @@ void Panel::processMainButtonMessage(const QJsonValue &value) {
 	});
 }
 
+void Panel::processBackButtonMessage(const QJsonObject &args) {
+	_widget->setBackAllowed(args["is_visible"].toBool());
+}
+
 void Panel::createMainButton() {
 	_mainButton = std::make_unique<Button>(
 		_widget.get(),
@@ -673,6 +945,7 @@ void Panel::createMainButton() {
 	button->setClickedCallback([=] {
 		if (!button->isDisabled()) {
 			postEvent("main_button_pressed");
+			_mainButtonLastClick = crl::now();
 		}
 	});
 	button->hide();
@@ -760,6 +1033,22 @@ void Panel::updateThemeParams(const Webview::ThemeParams &params) {
 	postEvent("theme_changed", "\"theme_params\": " + params.json);
 }
 
+void Panel::invoiceClosed(const QString &slug, const QString &status) {
+	if (!_webview || !_webview->window.widget()) {
+		return;
+	}
+	postEvent(
+		"invoice_closed",
+		"\"slug\": \"" + slug + "\", \"status\": \"" + status + "\"");
+	_widget->showAndActivate();
+	_hiddenForPayment = false;
+}
+
+void Panel::hideForPayment() {
+	_hiddenForPayment = true;
+	_widget->hideGetDuration();
+}
+
 void Panel::postEvent(const QString &event, const QString &data) {
 	_webview->window.eval(R"(
 if (window.TelegramGameProxy) {
@@ -820,8 +1109,12 @@ std::unique_ptr<Panel> Show(Args &&args) {
 		args.userDataPath,
 		std::move(args.title),
 		std::move(args.handleLocalUri),
+		std::move(args.handleInvoice),
 		std::move(args.sendData),
 		std::move(args.close),
+		args.phone,
+		args.menuButtons,
+		std::move(args.handleMenuButton),
 		std::move(args.themeParams));
 	if (!result->showWebview(args.url, params, std::move(args.bottom))) {
 		const auto available = Webview::Availability();

@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_pts_waiter.h"
 #include "data/data_location.h"
 #include "data/data_chat_participant_status.h"
+#include "data/data_peer_bot_commands.h"
 
 struct ChannelLocation {
 	QString address;
@@ -52,6 +53,8 @@ enum class ChannelDataFlag {
 	HasLink = (1 << 18),
 	SlowmodeEnabled = (1 << 19),
 	NoForwards = (1 << 20),
+	JoinToWrite = (1 << 21),
+	RequestToJoin = (1 << 22),
 };
 inline constexpr bool is_flag_type(ChannelDataFlag) { return true; };
 using ChannelDataFlags = base::flags<ChannelDataFlag>;
@@ -83,12 +86,9 @@ public:
 	const ChannelLocation *getLocation() const;
 	void setLocation(const ChannelLocation &location);
 
-	bool updateBotCommands(const MTPVector<MTPBotInfo> &data);
-	bool updateBotCommands(
-		UserId botId,
-		const MTPVector<MTPBotCommand> &data);
-	[[nodiscard]] auto botCommands() const
-		-> const base::flat_map<UserId, std::vector<BotCommand>> & {
+	Data::ChatBotCommands::Changed setBotCommands(
+		const std::vector<Data::BotCommands> &commands);
+	[[nodiscard]] const Data::ChatBotCommands &botCommands() const {
 		return _botCommands;
 	}
 
@@ -118,7 +118,7 @@ public:
 private:
 	ChatData *_migratedFrom = nullptr;
 	ChannelLocation _location;
-	base::flat_map<UserId, std::vector<BotCommand>> _botCommands;
+	Data::ChatBotCommands _botCommands;
 
 };
 
@@ -254,6 +254,12 @@ public:
 	}
 	[[nodiscard]] bool amCreator() const {
 		return flags() & Flag::Creator;
+	}
+	[[nodiscard]] bool joinToWrite() const {
+		return flags() & Flag::JoinToWrite;
+	}
+	[[nodiscard]] bool requestToJoin() const {
+		return flags() & Flag::RequestToJoin;
 	}
 
 	[[nodiscard]] auto adminRights() const {
@@ -411,8 +417,8 @@ public:
 	void setGroupCallDefaultJoinAs(PeerId peerId);
 	[[nodiscard]] PeerId groupCallDefaultJoinAs() const;
 
-	void setAllowedReactions(base::flat_set<QString> list);
-	[[nodiscard]] const base::flat_set<QString> &allowedReactions() const;
+	void setAllowedReactions(Data::AllowedReactions value);
+	[[nodiscard]] const Data::AllowedReactions &allowedReactions() const;
 
 	// Still public data members.
 	uint64 access = 0;
@@ -461,7 +467,7 @@ private:
 	QString _inviteLink;
 	std::optional<ChannelData*> _linkedChat;
 
-	base::flat_set<QString> _allowedReactions;
+	Data::AllowedReactions _allowedReactions;
 
 	std::unique_ptr<Data::GroupCall> _call;
 	PeerId _callDefaultJoinAs = 0;

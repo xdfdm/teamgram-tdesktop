@@ -20,6 +20,7 @@ struct HistoryMessageReply;
 
 namespace Data {
 struct Reaction;
+struct ReactionId;
 } // namespace Data
 
 namespace Window {
@@ -33,24 +34,21 @@ struct ChatPaintContext;
 class ChatStyle;
 } // namespace Ui
 
-namespace Lottie {
-class Icon;
-} // namespace Lottie
+namespace HistoryView::Reactions {
+struct ButtonParameters;
+struct AnimationArgs;
+class Animation;
+class InlineList;
+} // namespace HistoryView::Reactions
 
 namespace HistoryView {
 
+using PaintContext = Ui::ChatPaintContext;
 enum class PointState : char;
 enum class InfoDisplayType : char;
 struct StateRequest;
 struct TextState;
 class Media;
-
-using PaintContext = Ui::ChatPaintContext;
-
-namespace Reactions {
-struct ButtonParameters;
-class Animation;
-} // namespace Reactions
 
 enum class Context : char {
 	History,
@@ -71,8 +69,8 @@ public:
 		not_null<HistoryService*> message,
 		Element *replacing = nullptr) = 0;
 	virtual bool elementUnderCursor(not_null<const Element*> view) = 0;
-	virtual crl::time elementHighlightTime(
-		not_null<const HistoryItem*> item) = 0;
+	[[nodiscard]] virtual float64 elementHighlightOpacity(
+		not_null<const HistoryItem*> item) const = 0;
 	virtual bool elementInSelectionMode() = 0;
 	virtual bool elementIntersectsRange(
 		not_null<const Element*> view,
@@ -93,7 +91,7 @@ public:
 	virtual void elementShowTooltip(
 		const TextWithEntities &text,
 		Fn<void()> hiddenCallback) = 0;
-	virtual bool elementIsGifPaused() = 0;
+	virtual bool elementAnimationsPaused() = 0;
 	virtual bool elementHideReply(not_null<const Element*> view) = 0;
 	virtual bool elementShownUnread(not_null<const Element*> view) = 0;
 	virtual void elementSendBotCommand(
@@ -104,6 +102,10 @@ public:
 	virtual not_null<Ui::PathShiftGradient*> elementPathShiftGradient() = 0;
 	virtual void elementReplyTo(const FullMsgId &to) = 0;
 	virtual void elementStartInteraction(not_null<const Element*> view) = 0;
+	virtual void elementStartPremium(
+		not_null<const Element*> view,
+		Element *replacing) = 0;
+	virtual void elementCancelPremium(not_null<const Element*> view) = 0;
 	virtual void elementShowSpoilerAnimation() = 0;
 
 	virtual ~ElementDelegate() {
@@ -129,8 +131,8 @@ public:
 		not_null<HistoryService*> message,
 		Element *replacing = nullptr) override;
 	bool elementUnderCursor(not_null<const Element*> view) override;
-	crl::time elementHighlightTime(
-		not_null<const HistoryItem*> item) override;
+	[[nodiscard]] float64 elementHighlightOpacity(
+		not_null<const HistoryItem*> item) const override;
 	bool elementInSelectionMode() override;
 	bool elementIntersectsRange(
 		not_null<const Element*> view,
@@ -151,7 +153,7 @@ public:
 	void elementShowTooltip(
 		const TextWithEntities &text,
 		Fn<void()> hiddenCallback) override;
-	bool elementIsGifPaused() override;
+	bool elementAnimationsPaused() override;
 	bool elementHideReply(not_null<const Element*> view) override;
 	bool elementShownUnread(not_null<const Element*> view) override;
 	void elementSendBotCommand(
@@ -162,6 +164,10 @@ public:
 	not_null<Ui::PathShiftGradient*> elementPathShiftGradient() override;
 	void elementReplyTo(const FullMsgId &to) override;
 	void elementStartInteraction(not_null<const Element*> view) override;
+	void elementStartPremium(
+		not_null<const Element*> view,
+		Element *replacing) override;
+	void elementCancelPremium(not_null<const Element*> view) override;
 	void elementShowSpoilerAnimation() override;
 
 protected:
@@ -227,14 +233,6 @@ struct DateBadge : public RuntimeComponent<DateBadge, Element> {
 	QString text;
 	int width = 0;
 
-};
-
-struct ReactionAnimationArgs {
-	QString emoji;
-	std::shared_ptr<Lottie::Icon> flyIcon;
-	QRect flyFrom;
-
-	[[nodiscard]] ReactionAnimationArgs translated(QPoint point) const;
 };
 
 class Element
@@ -368,7 +366,6 @@ public:
 		int top,
 		int outerWidth) const;
 	[[nodiscard]] virtual ClickHandlerPtr rightActionLink() const;
-	[[nodiscard]] virtual bool displayEditedBadge() const;
 	[[nodiscard]] virtual TimeId displayedEditDate() const;
 	[[nodiscard]] virtual bool hasVisibleText() const;
 	[[nodiscard]] virtual HistoryMessageReply *displayedReply() const;
@@ -398,7 +395,6 @@ public:
 		int y,
 		int height,
 		not_null<const HistoryItem*> item) const;
-	float64 highlightOpacity(not_null<const HistoryItem*> item) const;
 
 	// Legacy blocks structure.
 	HistoryBlock *block();
@@ -417,16 +413,29 @@ public:
 
 	virtual QRect innerGeometry() const = 0;
 
+	void customEmojiRepaint();
+	void prepareCustomEmojiPaint(
+		Painter &p,
+		const PaintContext &context,
+		const Ui::Text::String &text) const;
+	void prepareCustomEmojiPaint(
+		Painter &p,
+		const PaintContext &context,
+		const Reactions::InlineList &reactions) const;
+	void clearCustomEmojiRepaint() const;
+
 	[[nodiscard]] ClickHandlerPtr fromPhotoLink() const {
 		return fromLink();
 	}
 
 	[[nodiscard]] bool markSponsoredViewed(int shownFromTop) const;
 
-	virtual void animateReaction(ReactionAnimationArgs &&args);
+	virtual void animateReaction(Reactions::AnimationArgs &&args);
 	void animateUnreadReactions();
 	[[nodiscard]] virtual auto takeReactionAnimations()
-		-> base::flat_map<QString, std::unique_ptr<Reactions::Animation>>;
+	-> base::flat_map<
+		Data::ReactionId,
+		std::unique_ptr<Reactions::Animation>>;
 
 	virtual ~Element();
 
@@ -479,6 +488,9 @@ private:
 	std::unique_ptr<Media> _media;
 	mutable ClickHandlerPtr _fromLink;
 	bool _isScheduledUntilOnline = false;
+	mutable bool _heavyCustomEmoji = false;
+	mutable bool _customEmojiRepaintScheduled = false;
+
 	const QDateTime _dateTime;
 
 	int _y = 0;

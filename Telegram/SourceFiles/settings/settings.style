@@ -18,6 +18,8 @@ settingsButton: SettingsButton(infoProfileButton) {
 settingsButtonNoIcon: SettingsButton(settingsButton) {
 	padding: margins(22px, 10px, 22px, 8px);
 }
+settingsButtonActive: SettingsButton(infoMainButton, settingsButton) {
+}
 settingsAttentionButton: SettingsButton(settingsButtonNoIcon) {
 	textFg: attentionButtonFg;
 	textFgOver: attentionButtonFgOver;
@@ -91,6 +93,19 @@ settingsIconPin: icon {{ "settings/pin", settingsIconFg }};
 settingsIconDownload: icon {{ "settings/download", settingsIconFg }};
 settingsIconMention: icon {{ "settings/mention", settingsIconFg }};
 
+settingsPremiumIconChannelsOff: icon {{ "settings/premium/channels_off", settingsIconFg }};
+settingsPremiumIconDouble: icon {{ "settings/premium/double", settingsIconFg }};
+settingsPremiumIconStatus: icon {{ "settings/premium/status", settingsIconFg }};
+settingsPremiumIconLike: icon {{ "settings/premium/like", settingsIconFg }};
+settingsPremiumIconPlay: icon {{ "settings/premium/play", settingsIconFg }};
+settingsPremiumIconSpeed: icon {{ "settings/premium/speed", settingsIconFg }};
+settingsPremiumIconStar: icon {{ "settings/premium/star", settingsIconFg }};
+settingsPremiumIconVoice: icon {{ "settings/premium/voice", settingsIconFg }};
+settingsPremiumIconFiles: icon {{ "settings/premium/files", settingsIconFg }};
+
+settingsIconAdd: icon {{ "settings/add", windowFgActive }};
+settingsIconRemove: icon {{ "settings/remove", windowFgActive }};
+
 settingsCheckbox: Checkbox(defaultBoxCheckbox) {
 	textPosition: point(15px, 1px);
 }
@@ -136,6 +151,21 @@ settingsCloudPasswordLabel: FlatLabel(defaultFlatLabel) {
 	maxHeight: 20px;
 }
 settingsCloudPasswordLabelPadding: margins(22px, 8px, 10px, 8px);
+settingsCloudPasswordIconSize: 100px;
+
+settingLocalPasscodeInputField: InputField(defaultInputField) {
+	width: 256px;
+}
+settingLocalPasscodeDescription: FlatLabel(changePhoneDescription) {
+	minWidth: 256px;
+}
+settingLocalPasscodeDescriptionHeight: 52px;
+settingLocalPasscodeError: FlatLabel(changePhoneError) {
+	minWidth: 256px;
+}
+settingLocalPasscodeDescriptionBottomSkip: 15px;
+settingLocalPasscodeIconPadding: margins(0px, 19px, 0px, 5px);
+settingLocalPasscodeButtonPadding: margins(0px, 19px, 0px, 35px);
 
 settingsInfoPhotoHeight: 161px;
 settingsInfoPhotoSize: 100px;
@@ -155,6 +185,11 @@ settingsInfoPhotoTop: 0px;
 settingsInfoPhotoSkip: 7px;
 settingsInfoNameSkip: -1px;
 settingsInfoUploadLeft: 6px;
+settingsInfoPeerBadge: InfoPeerBadge {
+	premium: icon {{ "dialogs/dialogs_premium", dialogsVerifiedIconBg }};
+	premiumFg: dialogsVerifiedIconBg;
+	sizeTag: 0; // Normal
+}
 
 settingsBio: InputField(defaultInputField) {
 	textBg: transparent;
@@ -247,8 +282,14 @@ settingsAccentColorSize: 24px;
 settingsAccentColorSkip: 4px;
 settingsAccentColorLine: 3px;
 
-settingsFilterIconSkip: 68px;
-settingsFilterIconLeft: 17px;
+settingsFilterDividerLabel: FlatLabel(boxDividerLabel) {
+	minWidth: 258px;
+	maxHeight: 0px;
+	align: align(top);
+}
+settingsFilterDividerLabelPadding: margins(0px, 16px, 0px, 22px);
+settingsFilterIconSize: 74px;
+settingsFilterIconPadding: margins(0px, 17px, 0px, 5px);
 
 settingsDeviceName: InputField(defaultInputField) {
 	textBg: transparent;
@@ -385,3 +426,92 @@ notifyPreviewTitlePosition: point(64px, 9px);
 notifyPreviewTextPosition: point(64px, 30px);
 notifyPreviewChecksSkip: 12px;
 notifyPreviewBottomSkip: 9px;
+
+settingsPremiumButtonPadding: margins(11px, 11px, 11px, 3px);
+settingsPremiumTopBarBackIcon: icon {{ "info/info_back", premiumButtonFg }};
+settingsPremiumTopBarBackIconOver: icon {{ "info/info_back", premiumButtonFg }};
+settingsPremiumStarSize: size(84px, 81px);
+settingsPremiumStarTopSkip: 37px;
+settingsPremiumTopBarBack: IconButton(infoTopBarBack) {
+	icon: settingsPremiumTopBarBackIcon;
+	iconOver: settingsPremiumTopBarBackIconOver;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: callMuteRipple;
+	}
+}
+settingsPremiumLayerTopBarBack: IconButton(infoLayerTopBarBack) {
+	icon: settingsPremiumTopBarBackIcon;
+	iconOver: settingsPremiumTopBarBackIconOver;
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: callMuteRipple;
+	}
+}
+settingsPremiumTopBarClose: IconButton(infoTopBarClose) {
+	icon: icon {{ "info/info_close", premiumButtonFg }};
+	iconOver: icon {{ "info/info_close", premiumButtonFg }};
+	ripple: RippleAnimation(defaultRippleAnimation) {
+		color: callMuteRipple;
+	}
+}
+settingsPremiumMoveLeft: IconButton(settingsPremiumLayerTopBarBack) {
+	width: 52px;
+	height: 56px;
+	iconPosition: point(-1px, -1px);
+}
+settingsPremiumMoveRightIcon: icon {{ "info/info_back-flip_horizontal", premiumButtonFg }};
+settingsPremiumMoveRightIconOver: icon {{ "info/info_back-flip_horizontal", premiumButtonFg }};
+settingsPremiumMoveRight: IconButton(settingsPremiumMoveLeft) {
+	icon: settingsPremiumMoveRightIcon;
+	iconOver: settingsPremiumMoveRightIconOver;
+}
+settingsPremiumRowTitlePadding: margins(59px, 5px, 46px, 1px);
+settingsPremiumRowAboutPadding: margins(59px, 0px, 46px, 6px);
+settingsPremiumPreviewTitlePadding: margins(24px, 13px, 24px, 3px);
+settingsPremiumPreviewAboutPadding: margins(24px, 0px, 24px, 11px);
+settingsPremiumPreviewLinePadding: margins(18px, 0px, 18px, 8px);
+
+settingsPremiumTitlePadding: margins(0px, 18px, 0px, 11px);
+settingsPremiumAboutTextStyle: TextStyle(defaultTextStyle) {
+	font: font(12px);
+	linkFont: font(12px underline);
+	linkFontOver: font(12px underline);
+	lineHeight: 18px;
+}
+settingsPremiumAbout: FlatLabel(defaultFlatLabel) {
+	style: settingsPremiumAboutTextStyle;
+	palette: TextPalette(defaultTextPalette) {
+		linkFg: premiumButtonFg;
+	}
+	align: align(top);
+	textFg: premiumButtonFg;
+	minWidth: 190px;
+}
+settingsPremiumArrowShift: point(-5px, -1px);
+settingsPremiumArrow: icon{{ "settings/premium/arrow", menuIconFg }};
+settingsPremiumArrowOver: icon{{ "settings/premium/arrow", menuIconFgOver }};
+settingsPremiumStatusPadding: margins(22px, 8px, 22px, 2px);
+
+settingsPremiumOptionsPadding: margins(0px, 9px, 0px, 2px);
+settingsPremiumTopHeight: 220px;
+settingsPremiumUserHeight: 223px;
+settingsPremiumUserTitlePadding: margins(0px, 16px, 0px, 6px);
+settingsPremiumUserTitle: FlatLabel(boxTitle) {
+	style: TextStyle(defaultTextStyle) {
+		font: boxTitleFont;
+		linkFont: boxTitleFont;
+		linkFontOver: font(16px semibold underline);
+		lineHeight: 14px;
+	}
+	minWidth: 300px;
+	maxHeight: 0px;
+	align: align(top);
+}
+settingsPremiumUserAbout: FlatLabel(boxDividerLabel) {
+	style: settingsPremiumAboutTextStyle;
+	minWidth: 315px;
+	maxHeight: 0px;
+	align: align(top);
+}
+
+settingsPremiumLock: icon{{ "emoji/premium_lock", windowActiveTextFg, point(0px, 1px) }};
+settingsPremiumLockSkip: 3px;

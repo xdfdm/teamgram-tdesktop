@@ -24,11 +24,13 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "history/history_item.h"
 #include "data/data_user.h"
 #include "data/data_session.h"
+#include "window/window_controller.h"
 #include "window/window_session_controller.h"
-#include "boxes/abstract_box.h" // Ui::hideLayer().
-#include "facades.h"
+#include "styles/style_layers.h"
 
 namespace {
+
+// Possible context owners: media viewer, profile, history widget.
 
 void SearchByHashtag(ClickContext context, const QString &tag) {
 	const auto my = context.other.value<ClickHandlerContext>();
@@ -117,15 +119,29 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 				: parsedUrl.isValid()
 				? QString::fromUtf8(parsedUrl.toEncoded())
 				: ShowEncoded(displayed);
-			Ui::show(
-				Ui::MakeConfirmBox({
-					.text = (tr::lng_open_this_link(tr::now)
-						+ qsl("\n\n")
-						+ displayUrl),
-					.confirmed = [=] { Ui::hideLayer(); open(); },
+			const auto my = context.value<ClickHandlerContext>();
+			const auto controller = my.sessionWindow.get();
+			const auto use = controller
+				? &controller->window()
+				: Core::App().activeWindow();
+			auto box = Box([=](not_null<Ui::GenericBox*> box) {
+				Ui::ConfirmBox(box, {
+					.text = (tr::lng_open_this_link(tr::now)),
+					.confirmed = [=](Fn<void()> hide) { hide(); open(); },
 					.confirmText = tr::lng_open_link(),
-				}),
-				Ui::LayerOption::KeepOther);
+				});
+				const auto &st = st::boxLabel;
+				box->addSkip(st.style.lineHeight - st::boxPadding.bottom());
+				const auto url = box->addRow(
+					object_ptr<Ui::FlatLabel>(box, displayUrl, st));
+				url->setSelectable(true);
+				url->setContextCopyText(tr::lng_context_copy_link(tr::now));
+			});
+			if (my.show) {
+				my.show->showBox(std::move(box));
+			} else if (use) {
+				use->show(std::move(box), Ui::LayerOption::KeepOther);
+			}
 		} else {
 			open();
 		}
@@ -148,16 +164,22 @@ void BotGameUrlClickHandler::onClick(ClickContext context) const {
 		|| _bot->session().local().isBotTrustedOpenGame(_bot->id)) {
 		open();
 	} else {
-		const auto callback = [=, bot = _bot] {
-			Ui::hideLayer();
-			bot->session().local().markBotTrustedOpenGame(bot->id);
-			open();
-		};
-		Ui::show(Ui::MakeConfirmBox({
-			.text = tr::lng_allow_bot_pass(tr::now, lt_bot_name, _bot->name),
-			.confirmed = callback,
-			.confirmText = tr::lng_allow_bot(),
-		}));
+		const auto my = context.other.value<ClickHandlerContext>();
+		if (const auto controller = my.sessionWindow.get()) {
+			const auto callback = [=, bot = _bot](Fn<void()> close) {
+				close();
+				bot->session().local().markBotTrustedOpenGame(bot->id);
+				open();
+			};
+			controller->show(Ui::MakeConfirmBox({
+				.text = tr::lng_allow_bot_pass(
+					tr::now,
+					lt_bot_name,
+					_bot->name()),
+				.confirmed = callback,
+				.confirmText = tr::lng_allow_bot(),
+			}));
+		}
 	}
 }
 
@@ -172,9 +194,16 @@ QString MentionClickHandler::copyToClipboardContextItemText() const {
 void MentionClickHandler::onClick(ClickContext context) const {
 	const auto button = context.button;
 	if (button == Qt::LeftButton || button == Qt::MiddleButton) {
-		if (const auto m = App::main()) { // multi good
+		const auto my = context.other.value<ClickHandlerContext>();
+		const auto controller = my.sessionWindow.get();
+		const auto use = controller
+			? controller
+			: Core::App().activeWindow()
+			? Core::App().activeWindow()->sessionController()
+			: nullptr;
+		if (use) {
 			using Info = Window::SessionNavigation::PeerByLinkInfo;
-			m->controller()->showPeerByLink(Info{
+			use->showPeerByLink(Info{
 				.usernameOrId = _tag.mid(1),
 				.resolveType = Window::ResolveType::Mention,
 			});
@@ -189,22 +218,27 @@ auto MentionClickHandler::getTextEntity() const -> TextEntity {
 void MentionNameClickHandler::onClick(ClickContext context) const {
 	const auto button = context.button;
 	if (button == Qt::LeftButton || button == Qt::MiddleButton) {
-		if (auto user = _session->data().userLoaded(_userId)) {
-			Ui::showPeerProfile(user);
+		const auto my = context.other.value<ClickHandlerContext>();
+		if (const auto controller = my.sessionWindow.get()) {
+			if (auto user = _session->data().userLoaded(_userId)) {
+				controller->showPeerInfo(user);
+			}
 		}
 	}
 }
 
 auto MentionNameClickHandler::getTextEntity() const -> TextEntity {
-	const auto data = QString::number(_userId.bare)
-		+ '.'
-		+ QString::number(_accessHash);
+	const auto data = TextUtilities::MentionNameDataFromFields({
+		.selfId = _session->userId().bare,
+		.userId = _userId.bare,
+		.accessHash = _accessHash,
+	});
 	return { EntityType::MentionName, data };
 }
 
 QString MentionNameClickHandler::tooltip() const {
 	if (const auto user = _session->data().userLoaded(_userId)) {
-		const auto name = user->name;
+		const auto name = user->name();
 		if (name != _text) {
 			return name;
 		}
@@ -295,14 +329,17 @@ void MonospaceClickHandler::onClick(ClickContext context) const {
 		const auto hasCopyRestriction = item
 			&& (!item->history()->peer->allowsForwarding()
 				|| item->forbidsForward());
+		const auto toastParent = Window::Show(controller).toastParent();
 		if (hasCopyRestriction) {
-			Ui::Toast::Show(item->history()->peer->isBroadcast()
-				? tr::lng_error_nocopy_channel(tr::now)
-				: tr::lng_error_nocopy_group(tr::now));
+			Ui::Toast::Show(
+				toastParent,
+				item->history()->peer->isBroadcast()
+					? tr::lng_error_nocopy_channel(tr::now)
+					: tr::lng_error_nocopy_group(tr::now));
 			return;
 		}
+		Ui::Toast::Show(toastParent, tr::lng_text_copied(tr::now));
 	}
-	Ui::Toast::Show(tr::lng_text_copied(tr::now));
 	TextUtilities::SetClipboardText(TextForMimeData::Simple(_text.trimmed()));
 }
 

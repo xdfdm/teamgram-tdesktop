@@ -61,16 +61,6 @@ InnerWidget::InnerWidget(
 	}, lifetime());
 }
 
-bool InnerWidget::canHideDetailsEver() const {
-	return false;// (_peer->isChat() || _peer->isMegagroup());
-}
-
-rpl::producer<bool> InnerWidget::canHideDetails() const {
-	using namespace rpl::mappers;
-	return MembersCountValue(_peer)
-		| rpl::map(_1 > 0);
-}
-
 object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 		not_null<RpWidget*> parent) {
 	auto result = object_ptr<Ui::VerticalLayout>(parent);
@@ -85,19 +75,7 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 	}, _cover->lifetime());
 	_cover->setOnlineCount(rpl::single(0));
 	auto details = SetupDetails(_controller, parent, _peer);
-	if (canHideDetailsEver()) {
-		_cover->setToggleShown(canHideDetails());
-		_infoWrap = result->add(object_ptr<Ui::SlideWrap<>>(
-			result,
-			std::move(details))
-		)->setDuration(
-			st::infoSlideDuration
-		)->toggleOn(
-			_cover->toggledValue()
-		);
-	} else {
-		result->add(std::move(details));
-	}
+	result->add(std::move(details));
 	result->add(setupSharedMedia(result.data()));
 	if (auto members = SetupChannelMembers(_controller, result.data(), _peer)) {
 		result->add(std::move(members));
@@ -115,12 +93,12 @@ object_ptr<Ui::RpWidget> InnerWidget::setupContent(
 		) | rpl::start_with_next([this](Ui::ScrollToRequest request) {
 			auto min = (request.ymin < 0)
 				? request.ymin
-				: mapFromGlobal(_members->mapToGlobal({ 0, request.ymin })).y();
+				: MapFrom(this, _members, QPoint(0, request.ymin)).y();
 			auto max = (request.ymin < 0)
-				? mapFromGlobal(_members->mapToGlobal({ 0, 0 })).y()
+				? MapFrom(this, _members, QPoint()).y()
 				: (request.ymax < 0)
 				? request.ymax
-				: mapFromGlobal(_members->mapToGlobal({ 0, request.ymax })).y();
+				: MapFrom(this, _members, QPoint(0, request.ymax)).y();
 			_scrollToRequests.fire({ min, max });
 		}, _members->lifetime());
 		_cover->setOnlineCount(_members->onlineCountValue());
@@ -244,19 +222,14 @@ void InnerWidget::visibleTopBottomUpdated(
 }
 
 void InnerWidget::saveState(not_null<Memento*> memento) {
-	memento->setInfoExpanded(_cover->toggled());
 	if (_members) {
 		memento->setMembersState(_members->saveState());
 	}
 }
 
 void InnerWidget::restoreState(not_null<Memento*> memento) {
-	_cover->toggle(memento->infoExpanded(), anim::type::instant);
 	if (_members) {
 		_members->restoreState(memento->membersState());
-	}
-	if (_infoWrap) {
-		_infoWrap->finishAnimating();
 	}
 	if (_sharedMediaWrap) {
 		_sharedMediaWrap->finishAnimating();

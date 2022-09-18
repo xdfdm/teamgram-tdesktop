@@ -15,6 +15,9 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/widgets/scroll_area.h"
 #include "history/view/history_view_top_bar_widget.h"
 
+struct ClickContext;
+struct ClickHandlerContext;
+
 namespace Data {
 struct Group;
 class CloudImageView;
@@ -33,6 +36,7 @@ class Element;
 
 namespace HistoryView::Reactions {
 class Manager;
+struct ChosenReaction;
 struct ButtonParameters;
 } // namespace HistoryView::Reactions
 
@@ -48,6 +52,11 @@ enum class ReportReason;
 struct ChatPaintContext;
 class PathShiftGradient;
 } // namespace Ui
+
+namespace Dialogs::Ui {
+using namespace ::Ui;
+class VideoUserpic;
+} // namespace Dialogs::Ui
 
 class HistoryInner;
 class HistoryMainElementDelegate;
@@ -120,8 +129,8 @@ public:
 		int from,
 		int till) const;
 	void elementStartStickerLoop(not_null<const Element*> view);
-	[[nodiscard]] crl::time elementHighlightTime(
-		not_null<const HistoryItem*> item);
+	[[nodiscard]] float64 elementHighlightOpacity(
+		not_null<const HistoryItem*> item) const;
 	void elementShowPollResults(
 		not_null<PollData*> poll,
 		FullMsgId context);
@@ -136,7 +145,7 @@ public:
 	void elementShowTooltip(
 		const TextWithEntities &text,
 		Fn<void()> hiddenCallback);
-	bool elementIsGifPaused();
+	bool elementAnimationsPaused();
 	void elementSendBotCommand(
 		const QString &command,
 		const FullMsgId &context);
@@ -145,6 +154,10 @@ public:
 	not_null<Ui::PathShiftGradient*> elementPathShiftGradient();
 	void elementReplyTo(const FullMsgId &to);
 	void elementStartInteraction(not_null<const Element*> view);
+	void elementStartPremium(
+		not_null<const Element*> view,
+		Element *replacing);
+	void elementCancelPremium(not_null<const Element*> view);
 	void elementShowSpoilerAnimation();
 
 	void updateBotInfo(bool recount = true);
@@ -181,6 +194,14 @@ public:
 
 	void onParentGeometryChanged();
 
+	[[nodiscard]] Fn<HistoryView::ElementDelegate*()> elementDelegateFactory(
+		FullMsgId itemId) const;
+	[[nodiscard]] ClickHandlerContext prepareClickHandlerContext(
+		FullMsgId itemId) const;
+	[[nodiscard]] ClickContext prepareClickContext(
+		Qt::MouseButton button,
+		FullMsgId itemId) const;
+
 	[[nodiscard]] static auto DelegateMixin()
 	-> std::unique_ptr<HistoryMainElementDelegateMixin>;
 
@@ -205,6 +226,8 @@ private:
 	void onTouchScrollTimer();
 
 	class BotAbout;
+	using ChosenReaction = HistoryView::Reactions::ChosenReaction;
+	using VideoUserpic = Dialogs::Ui::VideoUserpic;
 	using SelectedItems = std::map<HistoryItem*, TextSelection, std::less<>>;
 	enum class MouseAction {
 		None,
@@ -375,6 +398,7 @@ private:
 		const HistoryView::TextState &reactionState) const
 	-> HistoryView::Reactions::ButtonParameters;
 	void toggleFavoriteReaction(not_null<Element*> view) const;
+	void reactionChosen(const ChosenReaction &reaction);
 
 	void setupSharingDisallowed();
 	[[nodiscard]] bool hasCopyRestriction(HistoryItem *item = nullptr) const;
@@ -382,6 +406,8 @@ private:
 	[[nodiscard]] bool hasCopyRestrictionForSelected() const;
 	bool showCopyRestrictionForSelected();
 	[[nodiscard]] bool hasSelectRestriction() const;
+
+	VideoUserpic *validateVideoUserpic(not_null<PeerData*> peer);
 
 	// Does any of the shown histories has this flag set.
 	bool hasPendingResizedItems() const;
@@ -430,8 +456,12 @@ private:
 	base::flat_map<
 		MsgId,
 		std::shared_ptr<Data::CloudImageView>> _sponsoredUserpics;
+	base::flat_map<
+		not_null<PeerData*>,
+		std::unique_ptr<VideoUserpic>> _videoUserpics;
 
 	std::unique_ptr<HistoryView::Reactions::Manager> _reactionsManager;
+	rpl::variable<HistoryItem*> _reactionsItem;
 
 	MouseAction _mouseAction = MouseAction::None;
 	TextSelectType _mouseSelectType = TextSelectType::Letters;
@@ -443,6 +473,7 @@ private:
 	uint16 _mouseTextSymbol = 0;
 	bool _pressWasInactive = false;
 	bool _recountedAfterPendingResizedItems = false;
+	bool _useCornerReaction = false;
 
 	QPoint _trippleClickPoint;
 	base::Timer _trippleClickTimer;

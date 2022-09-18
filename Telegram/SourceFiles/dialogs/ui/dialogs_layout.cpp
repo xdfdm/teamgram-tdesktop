@@ -11,6 +11,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "data/data_drafts.h"
 #include "data/data_session.h"
 #include "dialogs/dialogs_list.h"
+#include "dialogs/ui/dialogs_video_userpic.h"
 #include "styles/style_dialogs.h"
 #include "styles/style_window.h"
 #include "storage/localstorage.h"
@@ -19,6 +20,7 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include "ui/text/text_utilities.h"
 #include "ui/unread_badge.h"
 #include "ui/ui_utility.h"
+#include "core/ui_integration.h"
 #include "lang/lang_keys.h"
 #include "support/support_helper.h"
 #include "main/main_session.h"
@@ -173,7 +175,6 @@ int PaintWideCounter(
 		bool unreadMuted,
 		bool mentionOrReactionMuted) {
 	const auto initial = availableWidth;
-	auto hadOneBadge = false;
 	if (displayUnreadCounter || displayUnreadMark) {
 		const auto counter = (unreadCount > 0)
 			? QString::number(unreadCount)
@@ -196,8 +197,6 @@ int PaintWideCounter(
 			unreadTop,
 			st);
 		availableWidth -= badge.width() + st.padding;
-
-		hadOneBadge = true;
 	} else if (displayPinnedIcon) {
 		const auto &icon = active
 			? st::dialogsPinnedIconActive
@@ -210,8 +209,6 @@ int PaintWideCounter(
 			texttop,
 			fullWidth);
 		availableWidth -= icon.width() + st::dialogsUnreadPadding;
-
-		hadOneBadge = true;
 	}
 	if (displayMentionBadge || displayReactionBadge) {
 		const auto counter = QString();
@@ -251,7 +248,7 @@ int PaintWideCounter(
 				: st::dialogsUnreadReaction)).paintInCenter(p, badge);
 		availableWidth -= badge.width()
 			+ st.padding
-			+ (hadOneBadge ? st::dialogsUnreadPadding : 0);
+			+ st::dialogsUnreadPadding;
 	}
 	return availableWidth;
 }
@@ -301,6 +298,7 @@ enum class Flag {
 	SavedMessages    = 0x08,
 	RepliesMessages  = 0x10,
 	AllowUserOnline  = 0x20,
+	VideoPaused      = 0x40,
 };
 inline constexpr bool is_flag_type(Flag) { return true; }
 
@@ -310,8 +308,12 @@ void paintRow(
 		not_null<const BasicRow*> row,
 		not_null<Entry*> entry,
 		Dialogs::Key chat,
+		VideoUserpic *videoUserpic,
 		FilterId filterId,
 		PeerData *from,
+		Ui::PeerBadge &fromBadge,
+		Fn<void()> customEmojiRepaint,
+		const Ui::Text::String &fromName,
 		const HiddenSenderInfo *hiddenSenderInfo,
 		HistoryItem *item,
 		const Data::Draft *draft,
@@ -360,10 +362,12 @@ void paintRow(
 		row->paintUserpic(
 			p,
 			from,
+			videoUserpic,
 			(flags & Flag::AllowUserOnline) ? history : nullptr,
 			ms,
 			active,
-			fullWidth);
+			fullWidth,
+			(flags & Flag::VideoPaused));
 	} else if (hiddenSenderInfo) {
 		hiddenSenderInfo->emptyUserpic.paint(
 			p,
@@ -450,25 +454,35 @@ void paintRow(
 		if (!ShowSendActionInDialogs(history)
 			|| !history->sendActionPainter()->paint(p, nameleft, texttop, availableWidth, fullWidth, color, ms)) {
 			if (history->cloudDraftTextCache.isEmpty()) {
-				auto draftWrapped = Ui::Text::PlainLink(
+				using namespace TextUtilities;
+				auto draftWrapped = Text::PlainLink(
 					tr::lng_dialogs_text_from_wrapped(
 						tr::now,
 						lt_from,
 						tr::lng_from_draft(tr::now)));
 				auto draftText = supportMode
-					? Ui::Text::PlainLink(
+					? Text::PlainLink(
 						Support::ChatOccupiedString(history))
 					: tr::lng_dialogs_text_with_from(
 						tr::now,
 						lt_from_part,
 						draftWrapped,
 						lt_message,
-						{ .text = draft->textWithTags.text },
-						Ui::Text::WithEntities);
+						DialogsPreviewText({
+							.text = draft->textWithTags.text,
+							.entities = ConvertTextTagsToEntities(
+								draft->textWithTags.tags),
+						}),
+						Text::WithEntities);
+				const auto context = Core::MarkedTextContext{
+					.session = &history->session(),
+					.customEmojiRepaint = customEmojiRepaint,
+				};
 				history->cloudDraftTextCache.setMarkedText(
 					st::dialogsTextStyle,
 					draftText,
-					DialogTextOptions());
+					DialogTextOptions(),
+					context);
 			}
 			p.setPen(active ? st::dialogsTextFgActive : (selected ? st::dialogsTextFgOver : st::dialogsTextFg));
 			if (supportMode) {
@@ -556,25 +570,43 @@ void paintRow(
 			: st::dialogsNameFg);
 		p.drawTextLeft(rectForName.left(), rectForName.top(), fullWidth, text);
 	} else if (from) {
-		if (!(flags & Flag::SearchResult)) {
-			const auto badgeStyle = PeerBadgeStyle{
-				(active
-					? &st::dialogsVerifiedIconActive
-					: selected
-					? &st::dialogsVerifiedIconOver
-					: &st::dialogsVerifiedIcon),
-				(active
-					? &st::dialogsScamFgActive
-					: selected
-					? &st::dialogsScamFgOver
-					: &st::dialogsScamFg) };
-			const auto badgeWidth = DrawPeerBadgeGetWidth(
-				from,
+		if (history && !(flags & Flag::SearchResult)) {
+			const auto badgeWidth = fromBadge.drawGetWidth(
 				p,
 				rectForName,
-				from->nameText().maxWidth(),
+				fromName.maxWidth(),
 				fullWidth,
-				badgeStyle);
+				{
+					.peer = from,
+					.verified = (active
+						? &st::dialogsVerifiedIconActive
+						: selected
+						? &st::dialogsVerifiedIconOver
+						: &st::dialogsVerifiedIcon),
+					.premium = (active
+						? &st::dialogsPremiumIconActive
+						: selected
+						? &st::dialogsPremiumIconOver
+						: &st::dialogsPremiumIcon),
+					.scam = (active
+						? &st::dialogsScamFgActive
+						: selected
+						? &st::dialogsScamFgOver
+						: &st::dialogsScamFg),
+					.premiumFg = (active
+						? &st::dialogsVerifiedIconBgActive
+						: selected
+						? &st::dialogsVerifiedIconBgOver
+						: &st::dialogsVerifiedIconBg),
+					.preview = (active
+						? st::dialogsScamFgActive
+						: selected
+						? st::windowBgRipple
+						: st::windowBgOver)->c,
+					.customEmojiRepaint = customEmojiRepaint,
+					.now = ms,
+					.paused = bool(flags & Flag::VideoPaused),
+				});
 			rectForName.setWidth(rectForName.width() - badgeWidth);
 		}
 		p.setPen(active
@@ -582,14 +614,14 @@ void paintRow(
 			: selected
 			? st::dialogsNameFgOver
 			: st::dialogsNameFg);
-		from->nameText().drawElided(p, rectForName.left(), rectForName.top(), rectForName.width());
+		fromName.drawElided(p, rectForName.left(), rectForName.top(), rectForName.width());
 	} else if (hiddenSenderInfo) {
 		p.setPen(active
 			? st::dialogsNameFgActive
 			: selected
 			? st::dialogsNameFgOver
 			: st::dialogsNameFg);
-		hiddenSenderInfo->nameText.drawElided(p, rectForName.left(), rectForName.top(), rectForName.width());
+		hiddenSenderInfo->nameText().drawElided(p, rectForName.left(), rectForName.top(), rectForName.width());
 	} else {
 		p.setPen(active
 			? st::dialogsNameFgActive
@@ -790,11 +822,13 @@ QRect PaintUnreadBadge(
 void RowPainter::paint(
 		Painter &p,
 		not_null<const Row*> row,
+		VideoUserpic *videoUserpic,
 		FilterId filterId,
 		int fullWidth,
 		bool active,
 		bool selected,
-		crl::time ms) {
+		crl::time ms,
+		bool paused) {
 	const auto entry = row->entry();
 	const auto history = row->history();
 	const auto peer = history ? history->peer.get() : nullptr;
@@ -864,7 +898,8 @@ void RowPainter::paint(
 		| (selected ? Flag::Selected : Flag(0))
 		| (allowUserOnline ? Flag::AllowUserOnline : Flag(0))
 		| (peer && peer->isSelf() ? Flag::SavedMessages : Flag(0))
-		| (peer && peer->isRepliesChat() ? Flag::RepliesMessages : Flag(0));
+		| (peer && peer->isRepliesChat() ? Flag::RepliesMessages : Flag(0))
+		| (paused ? Flag::VideoPaused : Flag(0));
 	const auto paintItemCallback = [&](int nameleft, int namewidth) {
 		const auto texttop = st::dialogsPadding.y()
 			+ st::msgNameFont->height
@@ -889,7 +924,7 @@ void RowPainter::paint(
 			: (selected
 				? st::dialogsTextFgServiceOver
 				: st::dialogsTextFgService);
-		const auto itemRect = QRect(
+		const auto rect = QRect(
 			nameleft,
 			texttop,
 			availableWidth,
@@ -897,23 +932,23 @@ void RowPainter::paint(
 		const auto actionWasPainted = ShowSendActionInDialogs(history)
 			? history->sendActionPainter()->paint(
 				p,
-				itemRect.x(),
-				itemRect.y(),
-				itemRect.width(),
+				rect.x(),
+				rect.y(),
+				rect.width(),
 				fullWidth,
 				color,
 				ms)
 			: false;
 		if (const auto folder = row->folder()) {
-			PaintListEntryText(p, itemRect, active, selected, row);
+			PaintListEntryText(p, rect, active, selected, row);
 		} else if (history && !actionWasPainted) {
-			history->lastItemDialogsView.paint(
-				p,
-				item,
-				itemRect,
-				active,
-				selected,
-				{});
+			if (!history->lastItemDialogsView.prepared(item)) {
+				history->lastItemDialogsView.prepare(
+					item,
+					[=] { history->updateChatListEntry(); },
+					{});
+			}
+			history->lastItemDialogsView.paint(p, rect, active, selected);
 		}
 	};
 	const auto paintCounterCallback = [&] {
@@ -934,8 +969,12 @@ void RowPainter::paint(
 		row,
 		entry,
 		row->key(),
+		videoUserpic,
 		filterId,
 		from,
+		entry->chatListBadge(),
+		[=] { history->updateChatListEntry(); },
+		entry->chatListNameText(),
 		nullptr,
 		item,
 		cloudDraft,
@@ -1032,13 +1071,11 @@ void RowPainter::paint(
 			texttop,
 			availableWidth,
 			st::dialogsTextFont->height);
-		row->itemView().paint(
-			p,
-			item,
-			itemRect,
-			active,
-			selected,
-			previewOptions);
+		auto &view = row->itemView();
+		if (!view.prepared(item)) {
+			view.prepare(item, row->repaint(), previewOptions);
+		}
+		row->itemView().paint(p, itemRect, active, selected);
 	};
 	const auto paintCounterCallback = [&] {
 		PaintNarrowCounter(
@@ -1067,8 +1104,12 @@ void RowPainter::paint(
 		row,
 		history,
 		history,
+		nullptr,
 		FilterId(),
 		from,
+		row->badge(),
+		row->repaint(),
+		row->name(),
 		hiddenSenderInfo,
 		item,
 		cloudDraft,

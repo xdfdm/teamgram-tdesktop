@@ -18,33 +18,52 @@ namespace Serialize {
 namespace {
 
 constexpr auto kVersionTag = int32(0x7FFFFFFF);
-constexpr auto kVersion = 3;
+constexpr auto kVersion = 4;
 
 enum StickerSetType {
 	StickerSetTypeEmpty = 0,
 	StickerSetTypeID = 1,
 	StickerSetTypeShortName = 2,
+	StickerSetTypeEmoji = 3,
+	StickerSetTypeMasks = 4,
 };
 
 } // namespace
 
 void Document::writeToStream(QDataStream &stream, DocumentData *document) {
-	stream << quint64(document->id) << quint64(document->_access) << qint32(document->date);
-	stream << document->_fileReference << qint32(kVersionTag) << qint32(kVersion);
-	stream << document->filename() << document->mimeString() << qint32(document->_dc) << qint32(document->size);
-	stream << qint32(document->dimensions.width()) << qint32(document->dimensions.height());
-	stream << qint32(document->type);
+	stream
+		<< quint64(document->id)
+		<< quint64(document->_access)
+		<< qint32(document->date)
+		<< document->_fileReference
+		<< qint32(kVersionTag)
+		<< qint32(kVersion)
+		<< document->filename()
+		<< document->mimeString()
+		<< qint32(document->_dc)
+		// FileSize: Right now any file size fits 32 bit.
+		<< qint32(uint32(document->size))
+		<< qint32(document->dimensions.width())
+		<< qint32(document->dimensions.height())
+		<< qint32(document->type);
 	if (const auto sticker = document->sticker()) {
-		stream << document->sticker()->alt;
-		if (document->sticker()->set.id) {
+		stream << sticker->alt;
+		if (sticker->setType == Data::StickersType::Emoji) {
+			stream << qint32(StickerSetTypeEmoji);
+		} else if (sticker->setType == Data::StickersType::Masks) {
+			stream << qint32(StickerSetTypeMasks);
+		} else if (sticker->set.id) {
 			stream << qint32(StickerSetTypeID);
-		} else if (!document->sticker()->set.shortName.isEmpty()) {
-			stream << qint32(StickerSetTypeShortName);
 		} else {
 			stream << qint32(StickerSetTypeEmpty);
 		}
 	}
 	stream << qint32(document->getDuration());
+	if (document->type == StickerDocument) {
+		const auto premium = document->isPremiumSticker()
+			|| document->isPremiumEmoji();
+		stream << qint32(premium ? 1 : 0);
+	}
 	writeImageLocation(stream, document->thumbnailLocation());
 	stream << qint32(document->thumbnailByteSize());
 	writeImageLocation(stream, document->videoThumbnailLocation());
@@ -76,9 +95,14 @@ DocumentData *Document::readFromStreamHelper(
 		versionTag = 0;
 		version = 0;
 	}
-	stream >> name >> mime >> dc >> size;
-	stream >> width >> height;
-	stream >> type;
+	stream
+		>> name
+		>> mime
+		>> dc
+		>> size // FileSize: Right now any file size fits 32 bit.
+		>> width
+		>> height
+		>> type;
 
 	QVector<MTPDocumentAttribute> attributes;
 	if (!name.isEmpty()) {
@@ -86,10 +110,17 @@ DocumentData *Document::readFromStreamHelper(
 	}
 
 	qint32 duration = -1;
+	qint32 isPremiumSticker = 0;
 	if (type == StickerDocument) {
 		QString alt;
 		qint32 typeOfSet;
 		stream >> alt >> typeOfSet;
+		if (version >= 3) {
+			stream >> duration;
+			if (version >= 4) {
+				stream >> isPremiumSticker;
+			}
+		}
 		if (typeOfSet == StickerSetTypeEmpty) {
 			attributes.push_back(MTP_documentAttributeSticker(MTP_flags(0), MTP_string(alt), MTP_inputStickerSetEmpty(), MTPMaskCoords()));
 		} else if (info) {
@@ -105,17 +136,23 @@ DocumentData *Document::readFromStreamHelper(
 			case StickerSetTypeID: {
 				attributes.push_back(MTP_documentAttributeSticker(MTP_flags(0), MTP_string(alt), MTP_inputStickerSetID(MTP_long(info->setId), MTP_long(info->accessHash)), MTPMaskCoords()));
 			} break;
-			case StickerSetTypeShortName: {
-				attributes.push_back(MTP_documentAttributeSticker(MTP_flags(0), MTP_string(alt), MTP_inputStickerSetShortName(MTP_string(info->shortName)), MTPMaskCoords()));
+			case StickerSetTypeMasks: {
+				attributes.push_back(MTP_documentAttributeSticker(MTP_flags(MTPDdocumentAttributeSticker::Flag::f_mask), MTP_string(alt), MTP_inputStickerSetID(MTP_long(info->setId), MTP_long(info->accessHash)), MTPMaskCoords()));
+			} break;
+			case StickerSetTypeEmoji: {
+				using Flag = MTPDdocumentAttributeCustomEmoji::Flag;
+				attributes.push_back(MTP_documentAttributeCustomEmoji(
+					MTP_flags(isPremiumSticker ? Flag(0) : Flag::f_free),
+					MTP_string(alt),
+					MTP_inputStickerSetID(
+						MTP_long(info->setId),
+						MTP_long(info->accessHash))));
 			} break;
 			case StickerSetTypeEmpty:
 			default: {
 				attributes.push_back(MTP_documentAttributeSticker(MTP_flags(0), MTP_string(alt), MTP_inputStickerSetEmpty(), MTPMaskCoords()));
 			} break;
 			}
-		}
-		if (version >= 3) {
-			stream >> duration;
 		}
 	} else {
 		stream >> duration;
@@ -150,14 +187,17 @@ DocumentData *Document::readFromStreamHelper(
 		}
 	}
 
-	const auto storage = std::get_if<StorageFileLocation>(
-		&thumb->file().data);
 	if ((stream.status() != QDataStream::Ok)
 		|| (!dc && !access)
 		|| !thumb
-		|| !videoThumb
-		|| (thumb->valid()
-			&& (!storage || !storage->isDocumentThumbnail()))) {
+		|| !videoThumb) {
+		stream.setStatus(QDataStream::ReadCorruptData);
+		return nullptr;
+	}
+	const auto storage = std::get_if<StorageFileLocation>(
+		&thumb->file().data);
+	if (thumb->valid()
+		&& (!storage || !storage->isDocumentThumbnail())) {
 		stream.setStatus(QDataStream::ReadCorruptData);
 		// We can't convert legacy thumbnail location to modern, because
 		// size letter ('s' or 'm') is lost, it was not saved in legacy.
@@ -182,8 +222,9 @@ DocumentData *Document::readFromStreamHelper(
 			.location = *videoThumb,
 			.bytesCount = videoThumbnailByteSize
 		},
+		(isPremiumSticker == 1),
 		dc,
-		size);
+		int64(uint32(size)));
 }
 
 DocumentData *Document::readStickerFromStream(

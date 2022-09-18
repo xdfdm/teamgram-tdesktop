@@ -68,13 +68,10 @@ void Invoice::fillFromData(not_null<Data::Invoice*> invoice) {
 	_receiptMsgId = invoice->receiptMsgId;
 
 	// init strings
-	if (!invoice->description.isEmpty()) {
-		auto marked = TextWithEntities { invoice->description };
-		auto parseFlags = TextParseLinks | TextParseMultiline;
-		TextUtilities::ParseEntities(marked, parseFlags);
+	if (!invoice->description.empty()) {
 		_description.setMarkedText(
 			st::webPageDescriptionStyle,
-			marked,
+			invoice->description,
 			Ui::WebpageTextDescriptionOptions());
 	}
 	if (!invoice->title.isEmpty()) {
@@ -86,7 +83,7 @@ void Invoice::fillFromData(not_null<Data::Invoice*> invoice) {
 }
 
 QSize Invoice::countOptimalSize() {
-	auto lineHeight = unitedLineHeight();
+	auto lineHeight = UnitedLineHeight();
 
 	if (_attach) {
 		if (_status.hasSkipBlock()) {
@@ -142,7 +139,7 @@ QSize Invoice::countCurrentSize(int newWidth) {
 	accumulate_min(newWidth, maxWidth());
 	auto innerWidth = newWidth - st::msgPadding.left() - st::msgPadding.right();
 
-	auto lineHeight = unitedLineHeight();
+	auto lineHeight = UnitedLineHeight();
 
 	auto newHeight = 0;
 	if (_title.isEmpty()) {
@@ -214,7 +211,7 @@ void Invoice::draw(Painter &p, const PaintContext &context) const {
 	auto tshift = padding.top();
 	paintw -= padding.left() + padding.right();
 
-	auto lineHeight = unitedLineHeight();
+	auto lineHeight = UnitedLineHeight();
 	if (_titleHeight) {
 		p.setPen(semibold);
 		p.setTextPalette(stm->semiboldPalette);
@@ -286,7 +283,7 @@ TextState Invoice::textState(QPoint point, StateRequest request) const {
 	}
 	paintw -= padding.left() + padding.right();
 
-	auto lineHeight = unitedLineHeight();
+	auto lineHeight = UnitedLineHeight();
 	auto symbolAdd = 0;
 	if (_titleHeight) {
 		if (point.y() >= tshift && point.y() < tshift + _titleHeight) {

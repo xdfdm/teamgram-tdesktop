@@ -31,7 +31,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 #include <QtCore/QLockFile>
 #include <QtGui/QSessionManager>
 #include <QtGui/QScreen>
-#include <qpa/qplatformscreen.h>
 
 namespace Core {
 namespace {
@@ -219,11 +218,7 @@ void Sandbox::launchApplication() {
 }
 
 void Sandbox::setupScreenScale() {
-	constexpr auto processDpi = [](const QDpi &dpi) {
-		return (dpi.first + dpi.second) * 0.5;
-	};
-	const auto dpi = processDpi(
-		Sandbox::primaryScreen()->handle()->logicalDpi());
+	const auto dpi = Sandbox::primaryScreen()->logicalDotsPerInch();
 	LOG(("Primary screen DPI: %1").arg(dpi));
 	if (dpi <= 108) {
 		cSetScreenScale(100); // 100%:  96 DPI (0-108)
@@ -248,7 +243,7 @@ void Sandbox::setupScreenScale() {
 			LOG(("Environmental variables: QT_AUTO_SCREEN_SCALE_FACTOR='%1'").arg(qEnvironmentVariable("QT_AUTO_SCREEN_SCALE_FACTOR")));
 			LOG(("Environmental variables: QT_SCREEN_SCALE_FACTORS='%1'").arg(qEnvironmentVariable("QT_SCREEN_SCALE_FACTORS")));
 		}
-		style::SetDevicePixelRatio(int(ratio));
+		style::SetDevicePixelRatio(std::ceil(ratio));
 		if (Platform::IsMac() && ratio == 2.) {
 			cSetScreenScale(110); // 110% for Retina screens by default.
 		} else {
@@ -278,6 +273,9 @@ void Sandbox::socketConnected() {
 	const QStringList &lst(cSendPaths());
 	for (QStringList::const_iterator i = lst.cbegin(), e = lst.cend(); i != e; ++i) {
 		commands += qsl("SEND:") + _escapeTo7bit(*i) + ';';
+	}
+	if (qEnvironmentVariableIsSet("XDG_ACTIVATION_TOKEN")) {
+		commands += qsl("XDG_ACTIVATION_TOKEN:") + _escapeTo7bit(qEnvironmentVariable("XDG_ACTIVATION_TOKEN")) + ';';
 	}
 	if (!cStartUrl().isEmpty()) {
 		commands += qsl("OPEN:") + _escapeTo7bit(cStartUrl()) + ';';
@@ -366,7 +364,6 @@ void Sandbox::singleInstanceChecked() {
 		LOG(("App Info: Detected another instance"));
 	}
 
-	Ui::DisableCustomScaling();
 	refreshGlobalProxy();
 	if (!Logs::started() || !Logs::instanceChecked()) {
 		new NotStartedWindow();
@@ -444,6 +441,8 @@ void Sandbox::readClients() {
 					if (cSendPaths().isEmpty()) {
 						toSend.append(_escapeFrom7bit(cmds.mid(from + 5, to - from - 5)));
 					}
+				} else if (cmd.startsWith(qsl("XDG_ACTIVATION_TOKEN:"))) {
+					qputenv("XDG_ACTIVATION_TOKEN", _escapeFrom7bit(cmds.mid(from + 21, to - from - 21)).toUtf8());
 				} else if (cmd.startsWith(qsl("OPEN:"))) {
 					startUrl = _escapeFrom7bit(cmds.mid(from + 5, to - from - 5)).mid(0, 8192);
 					auto activateRequired = StartUrlRequiresActivate(startUrl);
