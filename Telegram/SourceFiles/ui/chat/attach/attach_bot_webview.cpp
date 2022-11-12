@@ -722,7 +722,7 @@ void Panel::openTgLink(const QJsonObject &args) {
 		_close();
 		return;
 	}
-	_handleLocalUri("https://t.me" + path);
+	_handleLocalUri("https://teamgram.me" + path);
 }
 
 void Panel::openExternalLink(const QJsonObject &args) {

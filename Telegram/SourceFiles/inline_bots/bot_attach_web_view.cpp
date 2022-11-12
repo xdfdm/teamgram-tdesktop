@@ -788,8 +788,8 @@ void AttachWebView::show(
 	const auto handleLocalUri = [close](QString uri) {
 		const auto local = Core::TryConvertUrlToLocal(uri);
 		if (uri == local || Core::InternalPassportLink(local)) {
-			return local.startsWith(qstr("tg://"));
-		} else if (!local.startsWith(qstr("tg://"), Qt::CaseInsensitive)) {
+			return local.startsWith(qstr("tg2://"));
+		} else if (!local.startsWith(qstr("tg2://"), Qt::CaseInsensitive)) {
 			return false;
 		}
 		UrlClickHandler::Open(local, {});

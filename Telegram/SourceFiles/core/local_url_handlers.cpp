@@ -882,11 +882,11 @@ QString TryConvertUrlToLocal(QString url) {
 		if (name.size() > 1 && name != "www") {
 			const auto result = TryConvertUrlToLocal(
 				subdomainMatch->captured(1)
-				+ "t.me/"
+				+ "teamgram.me/"
 				+ name
 				+ subdomainMatch->captured(3)
 				+ subdomainMatch->captured(4));
-			return result.startsWith("tg://resolve?domain=")
+			return result.startsWith("tg2://resolve?domain=")
 				? result
 				: url;
 		}
@@ -896,19 +896,19 @@ QString TryConvertUrlToLocal(QString url) {
 		auto query = telegramMeMatch->capturedView(5);
 		if (auto phoneMatch = regex_match(qsl("^\\+([0-9]+)(\\?|$)"), query, matchOptions)) {
 			auto params = query.mid(phoneMatch->captured(0).size()).toString();
-			return qsl("tg://resolve?phone=") + phoneMatch->captured(1) + (params.isEmpty() ? QString() : '&' + params);
+			return qsl("tg2://resolve?phone=") + phoneMatch->captured(1) + (params.isEmpty() ? QString() : '&' + params);
 		} else if (auto joinChatMatch = regex_match(qsl("^(joinchat/|\\+|\\%20)([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"), query, matchOptions)) {
-			return qsl("tg://join?invite=") + url_encode(joinChatMatch->captured(2));
+			return qsl("tg2://join?invite=") + url_encode(joinChatMatch->captured(2));
 		} else if (auto stickerSetMatch = regex_match(qsl("^(addstickers|addemoji)/([a-zA-Z0-9\\.\\_]+)(\\?|$)"), query, matchOptions)) {
-			return qsl("tg://") + stickerSetMatch->captured(1) + "?set=" + url_encode(stickerSetMatch->captured(2));
+			return qsl("tg2://") + stickerSetMatch->captured(1) + "?set=" + url_encode(stickerSetMatch->captured(2));
 		} else if (auto themeMatch = regex_match(qsl("^addtheme/([a-zA-Z0-9\\.\\_]+)(\\?|$)"), query, matchOptions)) {
-			return qsl("tg://addtheme?slug=") + url_encode(themeMatch->captured(1));
+			return qsl("tg2://addtheme?slug=") + url_encode(themeMatch->captured(1));
 		} else if (auto languageMatch = regex_match(qsl("^setlanguage/([a-zA-Z0-9\\.\\_\\-]+)(\\?|$)"), query, matchOptions)) {
-			return qsl("tg://setlanguage?lang=") + url_encode(languageMatch->captured(1));
+			return qsl("tg2://setlanguage?lang=") + url_encode(languageMatch->captured(1));
 		} else if (auto shareUrlMatch = regex_match(qsl("^share/url/?\\?(.+)$"), query, matchOptions)) {
-			return qsl("tg://msg_url?") + shareUrlMatch->captured(1);
+			return qsl("tg2://msg_url?") + shareUrlMatch->captured(1);
 		} else if (auto confirmPhoneMatch = regex_match(qsl("^confirmphone/?\\?(.+)"), query, matchOptions)) {
-			return qsl("tg://confirmphone?") + confirmPhoneMatch->captured(1);
+			return qsl("tg2://confirmphone?") + confirmPhoneMatch->captured(1);
 		} else if (auto ivMatch = regex_match(qsl("^iv/?\\?(.+)(#|$)"), query, matchOptions)) {
 			//
 			// We need to show our t.me page, not the url directly.
@@ -921,11 +921,11 @@ QString TryConvertUrlToLocal(QString url) {
 			//}
 			return url;
 		} else if (auto socksMatch = regex_match(qsl("^socks/?\\?(.+)(#|$)"), query, matchOptions)) {
-			return qsl("tg://socks?") + socksMatch->captured(1);
+			return qsl("tg2://socks?") + socksMatch->captured(1);
 		} else if (auto proxyMatch = regex_match(qsl("^proxy/?\\?(.+)(#|$)"), query, matchOptions)) {
-			return qsl("tg://proxy?") + proxyMatch->captured(1);
+			return qsl("tg2://proxy?") + proxyMatch->captured(1);
 		} else if (auto invoiceMatch = regex_match(qsl("^(invoice/|\\$)([a-zA-Z0-9_\\-]+)(\\?|#|$)"), query, matchOptions)) {
-			return qsl("tg://invoice?slug=") + invoiceMatch->captured(2);
+			return qsl("tg2://invoice?slug=") + invoiceMatch->captured(2);
 		} else if (auto bgMatch = regex_match(qsl("^bg/([a-zA-Z0-9\\.\\_\\-\\~]+)(\\?(.+)?)?$"), query, matchOptions)) {
 			const auto params = bgMatch->captured(3);
 			const auto bg = bgMatch->captured(1);
@@ -935,17 +935,17 @@ QString TryConvertUrlToLocal(QString url) {
 					|| regex_match(qsl("^[a-fA-F0-9]{6}(\\~[a-fA-F0-9]{6}){1,3}$"), bg))
 				? "gradient"
 				: "slug";
-			return qsl("tg://bg?") + type + '=' + bg + (params.isEmpty() ? QString() : '&' + params);
+			return qsl("tg2://bg?") + type + '=' + bg + (params.isEmpty() ? QString() : '&' + params);
 		} else if (auto postMatch = regex_match(qsl("^c/(\\-?\\d+)/(\\d+)(/?\\?|/?$)"), query, matchOptions)) {
 			auto params = query.mid(postMatch->captured(0).size()).toString();
-			return qsl("tg://privatepost?channel=%1&post=%2").arg(postMatch->captured(1), postMatch->captured(2)) + (params.isEmpty() ? QString() : '&' + params);
+			return qsl("tg2://privatepost?channel=%1&post=%2").arg(postMatch->captured(1), postMatch->captured(2)) + (params.isEmpty() ? QString() : '&' + params);
 		} else if (auto usernameMatch = regex_match(qsl("^([a-zA-Z0-9\\.\\_]+)(/?\\?|/?$|/(\\d+)/?(?:\\?|$))"), query, matchOptions)) {
 			auto params = query.mid(usernameMatch->captured(0).size()).toString();
 			auto postParam = QString();
 			if (auto postMatch = regex_match(qsl("^/\\d+/?(?:\\?|$)"), usernameMatch->captured(2))) {
 				postParam = qsl("&post=") + usernameMatch->captured(3);
 			}
-			return qsl("tg://resolve?domain=") + url_encode(usernameMatch->captured(1)) + postParam + (params.isEmpty() ? QString() : '&' + params);
+			return qsl("tg2://resolve?domain=") + url_encode(usernameMatch->captured(1)) + postParam + (params.isEmpty() ? QString() : '&' + params);
 		}
 	}
 	return url;
@@ -953,10 +953,10 @@ QString TryConvertUrlToLocal(QString url) {
 
 bool InternalPassportLink(const QString &url) {
 	const auto urlTrimmed = url.trimmed();
-	if (!urlTrimmed.startsWith(qstr("tg://"), Qt::CaseInsensitive)) {
+	if (!urlTrimmed.startsWith(qstr("tg2://"), Qt::CaseInsensitive)) {
 		return false;
 	}
-	const auto command = base::StringViewMid(urlTrimmed, qstr("tg://").size());
+	const auto command = base::StringViewMid(urlTrimmed, qstr("tg2://").size());
 
 	using namespace qthelp;
 	const auto matchOptions = RegExOption::CaseInsensitive;

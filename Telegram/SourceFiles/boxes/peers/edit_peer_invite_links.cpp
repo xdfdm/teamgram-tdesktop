@@ -315,10 +315,10 @@ QString Row::generateName() {
 		qstr("https://"),
 		QString()
 	).replace(
-		qstr("t.me/+"),
+		qstr("teamgram.me/+"),
 		QString()
 	).replace(
-		qstr("t.me/joinchat/"),
+		qstr("teamgram.me/joinchat/"),
 		QString()
 	);
 }

@@ -33,7 +33,7 @@ struct ConfigFields {
 	int stickersFavedLimit = 5;
 	rpl::variable<int> pinnedDialogsCountMax = 5;
 	rpl::variable<int> pinnedDialogsInFolderMax = 100;
-	QString internalLinksDomain = u"https://t.me/"_q;
+	QString internalLinksDomain = u"https://teamgram.me/"_q;
 	int channelsReadMediaPeriod = 86400 * 7;
 	int callReceiveTimeoutMs = 20000;
 	int callRingTimeoutMs = 90000;

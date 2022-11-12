@@ -104,7 +104,7 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 	const auto open = [=] {
 		UrlClickHandler::Open(url, context);
 	};
-	if (url.startsWith(qstr("tg://"), Qt::CaseInsensitive)
+	if (url.startsWith(qstr("tg2://"), Qt::CaseInsensitive)
 		|| url.startsWith(qstr("internal:"), Qt::CaseInsensitive)) {
 		open();
 	} else {
@@ -157,7 +157,7 @@ void BotGameUrlClickHandler::onClick(ClickContext context) const {
 	const auto open = [=] {
 		UrlClickHandler::Open(url, context.other);
 	};
-	if (url.startsWith(qstr("tg://"), Qt::CaseInsensitive)) {
+	if (url.startsWith(qstr("tg2://"), Qt::CaseInsensitive)) {
 		open();
 	} else if (!_bot
 		|| _bot->isVerified()

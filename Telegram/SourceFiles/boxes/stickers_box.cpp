@@ -1974,12 +1974,8 @@ void StickersBox::Inner::AddressField::correctValue(
 	auto removeFromBeginning = {
 		qstr("http://"),
 		qstr("https://"),
-		qstr("www.t.me/"),
-		qstr("www.telegram.me/"),
-		qstr("www.telegram.dog/"),
-		qstr("t.me/"),
-		qstr("telegram.me/"),
-		qstr("telegram.dog/"),
+		qstr("www.teamgram.me/"),
+		qstr("teamgram.me/"),
 		qstr("addstickers/"),
 	};
 	for (auto &removePhrase : removeFromBeginning) {
