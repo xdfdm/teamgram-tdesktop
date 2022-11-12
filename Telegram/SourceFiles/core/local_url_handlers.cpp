@@ -891,7 +891,7 @@ QString TryConvertUrlToLocal(QString url) {
 				: url;
 		}
 	}
-	auto telegramMeMatch = regex_match(qsl("^(https?://)?(www\\.)?(telegram\\.(me|dog)|t\\.me)/(.+)$"), url, matchOptions);
+	auto telegramMeMatch = regex_match(qsl("^(https?://)?(www\\.)?(teamgram\\.(me|dog)|teamgram\\.me)/(.+)$"), url, matchOptions);
 	if (telegramMeMatch) {
 		auto query = telegramMeMatch->capturedView(5);
 		if (auto phoneMatch = regex_match(qsl("^\\+([0-9]+)(\\?|$)"), query, matchOptions)) {
