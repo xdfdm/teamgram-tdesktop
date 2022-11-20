@@ -129,7 +129,7 @@ void AboutBox::keyPressEvent(QKeyEvent *e) {
 }
 
 QString telegramFaqLink() {
-	const auto result = qsl("https://telegram.org/faq");
+	const auto result = qsl("https://teamgram.net/faq");
 	const auto langpacked = [&](const char *language) {
 		return result + '/' + language;
 	};
