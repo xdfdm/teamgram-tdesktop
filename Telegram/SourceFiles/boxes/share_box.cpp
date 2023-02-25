@@ -1309,7 +1309,7 @@ QString AppendShareGameScoreUrl(
 	}
 
 	auto shareHash = shareHashEncrypted.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals);
-	auto shareUrl = u"tg://share_game_score?hash="_q + QString::fromLatin1(shareHash);
+	auto shareUrl = qsl("tg2://share_game_score?hash=") + QString::fromLatin1(shareHash);
 
 	auto shareComponent = u"tgShareScoreUrl="_q + qthelp::url_encode(shareUrl);
 

@@ -1538,7 +1538,7 @@ void ProxiesBoxController::share(const ProxyData &proxy) {
 	if (proxy.type == Type::Http) {
 		return;
 	}
-	const auto link = u"https://t.me/"_q
+	const auto link = qsl("https://teamgram.me/")
 		+ (proxy.type == Type::Socks5 ? "socks" : "proxy")
 		+ "?server=" + proxy.host + "&port=" + QString::number(proxy.port)
 		+ ((proxy.type == Type::Socks5 && !proxy.user.isEmpty())

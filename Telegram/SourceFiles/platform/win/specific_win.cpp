@@ -459,8 +459,8 @@ void AutostartToggle(bool enabled, Fn<void(bool)> done) {
 		silent,
 		FOLDERID_Startup,
 		L"-autostart",
-		L"Telegram autorun link.\n"
-		"You can disable autorun in Telegram settings.");
+		L"Teamgram autorun link.\n"
+		"You can disable autorun in Teamgram settings.");
 	if (done) {
 		done(enabled && success);
 	}
@@ -654,6 +654,7 @@ void NewVersionLaunched(int oldVersion) {
 } // namespace Platform
 
 void psSendToMenu(bool send, bool silent) {
+<<<<<<< HEAD
 	ManageAppLink(
 		send,
 		silent,
@@ -661,6 +662,9 @@ void psSendToMenu(bool send, bool silent) {
 		L"-sendpath",
 		L"Telegram send to link.\n"
 		"You can disable send to menu item in Telegram settings.");
+=======
+	ManageAppLink(send, silent, CSIDL_SENDTO, L"-sendpath", L"Teamgram send to link.\nYou can disable send to menu item in Telegram settings.");
+>>>>>>> teamgram2
 }
 
 bool psLaunchMaps(const Data::LocationPoint &point) {

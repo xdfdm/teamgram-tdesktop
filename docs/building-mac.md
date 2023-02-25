@@ -14,10 +14,11 @@ Go to ***BuildPath*** and run
 
     ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
     brew install git automake cmake wget pkg-config gnu-tar
-
+    git config --global user.name "FIRST_NAME LAST_NAME"
+    git config --global user.email "email@example.com"
     sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-
-    git clone --recursive https://github.com/telegramdesktop/tdesktop.git
+    git 
+    sudo git clone --recursive https://github.com/teamgram/teamgram-tdesktop.git tdesktop
     ./tdesktop/Telegram/build/prepare/mac.sh
 
 ### Building the project

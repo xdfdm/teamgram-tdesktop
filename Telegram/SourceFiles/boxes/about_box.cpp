@@ -65,7 +65,7 @@ AboutBox::AboutBox(QWidget *parent)
 }
 
 void AboutBox::prepare() {
-	setTitle(rpl::single(u"Telegram Desktop"_q));
+	setTitle(rpl::single(qsl("Teamgram Desktop")));
 
 	addButton(tr::lng_close(), [this] { closeBox(); });
 
@@ -130,7 +130,7 @@ void AboutBox::keyPressEvent(QKeyEvent *e) {
 }
 
 QString telegramFaqLink() {
-	const auto result = u"https://telegram.org/faq"_q;
+	const auto result = qsl("https://teamgram.net/faq");
 	const auto langpacked = [&](const char *language) {
 		return result + '/' + language;
 	};

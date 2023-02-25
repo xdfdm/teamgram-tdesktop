@@ -233,7 +233,7 @@ QString SpecialScanCredentialsKey(FileType type) {
 
 QString ValidateUrl(const QString &url) {
 	const auto result = qthelp::validate_url(url);
-	return result.startsWith("tg://", Qt::CaseInsensitive)
+	return result.startsWith("tg2://", Qt::CaseInsensitive)
 		? QString()
 		: result;
 }

@@ -640,7 +640,7 @@ bool Application::eventFilter(QObject *object, QEvent *e) {
 			const auto event = static_cast<QFileOpenEvent*>(e);
 			const auto url = QString::fromUtf8(
 				event->url().toEncoded().trimmed());
-			if (url.startsWith(u"tg://"_q, Qt::CaseInsensitive)) {
+			if (url.startsWith(qstr("tg2://"), Qt::CaseInsensitive)) {
 				cSetStartUrl(url.mid(0, 8192));
 				checkStartUrl();
 			}
@@ -1038,7 +1038,7 @@ void Application::checkStartUrl() {
 }
 
 bool Application::openLocalUrl(const QString &url, QVariant context) {
-	return openCustomUrl("tg://", LocalUrlHandlers(), url, context);
+	return openCustomUrl("tg2://", LocalUrlHandlers(), url, context);
 }
 
 bool Application::openInternalUrl(const QString &url, QVariant context) {
@@ -1689,12 +1689,10 @@ void Application::startShortcuts() {
 void Application::RegisterUrlScheme() {
 	base::Platform::RegisterUrlScheme(base::Platform::UrlSchemeDescriptor{
 		.executable = cExeDir() + cExeName(),
-		.arguments = Sandbox::Instance().customWorkingDir()
-			? u"-workdir \"%1\""_q.arg(cWorkingDir())
-			: QString(),
-		.protocol = u"tg"_q,
-		.protocolName = u"Telegram Link"_q,
-		.shortAppName = u"tdesktop"_q,
+		.arguments = qsl("-workdir \"%1\"").arg(cWorkingDir()),
+		.protocol = qsl("tg"),
+		.protocolName = qsl("Teamgram Link"),
+		.shortAppName = qsl("tdesktop"),
 		.longAppName = QCoreApplication::applicationName(),
 		.displayAppName = AppName.utf16(),
 		.displayAppDescription = AppName.utf16(),

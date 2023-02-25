@@ -34,8 +34,8 @@ Authorizations::Entry ParseEntry(const MTPDauthorization &data) {
 		|| isTest;
 
 	const auto appName = isDesktop
-		? u"Telegram Desktop%1"_q.arg(isTest ? " (GitHub)" : QString())
-		: qs(data.vapp_name());// + u" for "_q + qs(d.vplatform());
+		? QString("Teamgram Desktop%1").arg(isTest ? " (GitHub)" : QString())
+		: qs(data.vapp_name());// +qsl(" for ") + qs(d.vplatform());
 	const auto appVer = [&] {
 		const auto version = qs(data.vapp_version());
 		if (isDesktop) {

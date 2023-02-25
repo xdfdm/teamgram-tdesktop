@@ -65,7 +65,7 @@ bool UrlRequiresConfirmation(const QUrl &url) {
 
 	return !regex_match(
 		"(^|\\.)("
-		"telegram\\.(org|me|dog)"
+		"teamgram\\.(org|me|dog)"
 		"|t\\.me"
 		"|te\\.?legra\\.ph"
 		"|graph\\.org"
@@ -106,8 +106,8 @@ void HiddenUrlClickHandler::Open(QString url, QVariant context) {
 	const auto open = [=] {
 		UrlClickHandler::Open(url, context);
 	};
-	if (url.startsWith(u"tg://"_q, Qt::CaseInsensitive)
-		|| url.startsWith(u"internal:"_q, Qt::CaseInsensitive)) {
+	if (url.startsWith(qstr("tg2://"), Qt::CaseInsensitive)
+		|| url.startsWith(qstr("internal:"), Qt::CaseInsensitive)) {
 		open();
 	} else {
 		const auto parsedUrl = QUrl::fromUserInput(url);
@@ -159,7 +159,7 @@ void BotGameUrlClickHandler::onClick(ClickContext context) const {
 	const auto open = [=] {
 		UrlClickHandler::Open(url, context.other);
 	};
-	if (url.startsWith(u"tg://"_q, Qt::CaseInsensitive)) {
+	if (url.startsWith(qstr("tg2://"), Qt::CaseInsensitive)) {
 		open();
 	} else if (!_bot
 		|| _bot->isVerified()
