@@ -1,9 +1,9 @@
 /*
-This file is part of Teamgram Desktop,
-the official desktop application for the Teamgram messaging service.
+This file is part of Telegram Desktop,
+the official desktop application for the Telegram messaging service.
 
 For license and copyright information please follow this link:
-https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
+https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 "lng_language_name" = "English";
 "lng_switch_to_this" = "Continue in English";
@@ -168,8 +168,8 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_channels_limit_title" = "Too Many Communities";
 "lng_channels_limit1#one" = "You are a member of **{count}** groups and channels.";
 "lng_channels_limit1#other" = "You are a member of **{count}** groups and channels.";
-"lng_channels_limit2#one" = "Please leave some before joining a new one - or upgrade to **Teamgram Premium** to double the limit to **{count}** groups and channels.";
-"lng_channels_limit2#other" = "Please leave some before joining a new one - or upgrade to **Teamgram Premium** to double the limit to **{count}** groups and channels.";
+"lng_channels_limit2#one" = "Please leave some before joining a new one - or upgrade to **Telegram Premium** to double the limit to **{count}** groups and channels.";
+"lng_channels_limit2#other" = "Please leave some before joining a new one - or upgrade to **Telegram Premium** to double the limit to **{count}** groups and channels.";
 "lng_channels_limit2_final" = "Please leave some before joining a new one.";
 "lng_channels_leave_title" = "Least active communities";
 "lng_channels_leave_status" = "{type}, inactive {time}";
@@ -180,28 +180,28 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_links_limit_title" = "Too Many Public Links";
 "lng_links_limit1#one" = "You have reserved **{count}** public link.";
 "lng_links_limit1#other" = "You have reserved **{count}** public links.";
-"lng_links_limit2#one" = "Try revoking the link from an older group or channel, or upgrade to **Teamgram Premium** to double the limit to **{count}** public link.";
-"lng_links_limit2#other" = "Try revoking the link from an older group or channel, or upgrade to **Teamgram Premium** to double the limit to **{count}** public links.";
+"lng_links_limit2#one" = "Try revoking the link from an older group or channel, or upgrade to **Telegram Premium** to double the limit to **{count}** public link.";
+"lng_links_limit2#other" = "Try revoking the link from an older group or channel, or upgrade to **Telegram Premium** to double the limit to **{count}** public links.";
 "lng_links_limit2_final" = "Try revoking the link from an older group or channel";
 "lng_links_revoke_title" = "Your public communities";
 
 "lng_filter_chats_limit_title" = "Limit Reached";
 "lng_filter_chats_limit1#one" = "Sorry, you can't add more than **{count}** chat to a folder.";
 "lng_filter_chats_limit1#other" = "Sorry, you can't add more than **{count}** chats to a folder.";
-"lng_filter_chats_limit2#one" = "You can increase this limit to **{count}** by upgrading to **Teamgram Premium**.";
-"lng_filter_chats_limit2#other" = "You can increase this limit to **{count}** by upgrading to **Teamgram Premium**.";
+"lng_filter_chats_limit2#one" = "You can increase this limit to **{count}** by upgrading to **Telegram Premium**.";
+"lng_filter_chats_limit2#other" = "You can increase this limit to **{count}** by upgrading to **Telegram Premium**.";
 
 "lng_filters_limit_title" = "Limit Reached";
 "lng_filters_limit1#one" = "You have reached the limit of **{count}** folder.";
 "lng_filters_limit1#other" = "You have reached the limit of **{count}** folders.";
-"lng_filters_limit2#one" = "You can double the limit to **{count}** folder by subscribing to **Teamgram Premium**.";
-"lng_filters_limit2#other" = "You can double the limit to **{count}** folders by subscribing to **Teamgram Premium**.";
+"lng_filters_limit2#one" = "You can double the limit to **{count}** folder by subscribing to **Telegram Premium**.";
+"lng_filters_limit2#other" = "You can double the limit to **{count}** folders by subscribing to **Telegram Premium**.";
 
 "lng_filter_pin_limit_title" = "Limit Reached";
 "lng_filter_pin_limit1#one" = "Sorry, you can't pin more than **{count}** chat to the top.";
 "lng_filter_pin_limit1#other" = "Sorry, you can't pin more than **{count}** chats to the top.";
-"lng_filter_pin_limit2#one" = "Unpin some of the currently pinned ones or subscribe to **Teamgram Premium** to double the limit to **{count}** chat.";
-"lng_filter_pin_limit2#other" = "Unpin some of the currently pinned ones or subscribe to **Teamgram Premium** to double the limit to **{count}** chats.";
+"lng_filter_pin_limit2#one" = "Unpin some of the currently pinned ones or subscribe to **Telegram Premium** to double the limit to **{count}** chat.";
+"lng_filter_pin_limit2#other" = "Unpin some of the currently pinned ones or subscribe to **Telegram Premium** to double the limit to **{count}** chats.";
 
 "lng_forum_pin_limit#one" = "Sorry, you can't pin more than **{count}** topic to the top.";
 "lng_forum_pin_limit#other" = "Sorry, you can't pin more than **{count}** topics to the top.";
@@ -221,8 +221,8 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_caption_limit_title" = "Limit Reached";
 "lng_caption_limit1#one" = "Sorry, you can't use more than **{count}** character in media captions.";
 "lng_caption_limit1#other" = "Sorry, you can't use more than **{count}** characters in media captions.";
-"lng_caption_limit2#one" = "Make the caption shorter or subscribe to **Teamgram Premium** to double the limit to **{count}** character.";
-"lng_caption_limit2#other" = "Make the caption shorter or subscribe to **Teamgram Premium** to double the limit to **{count}** characters.";
+"lng_caption_limit2#one" = "Make the caption shorter or subscribe to **Telegram Premium** to double the limit to **{count}** character.";
+"lng_caption_limit2#other" = "Make the caption shorter or subscribe to **Telegram Premium** to double the limit to **{count}** characters.";
 "lng_caption_limit_reached#one" = "You've reached the media caption limit. Please make the caption shorter by {count} character.";
 "lng_caption_limit_reached#other" = "You've reached the media caption limit. Please make the caption shorter by {count} characters.";
 
@@ -230,13 +230,13 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_file_size_limit#one" = "{count} Gb";
 "lng_file_size_limit#other" = "{count} Gb";
 "lng_file_size_limit1" = "The document can't be sent, because it is larger than {size}.";
-"lng_file_size_limit2" = "You can double this limit to {size} per document by subscribing to **Teamgram Premium**.";
+"lng_file_size_limit2" = "You can double this limit to {size} per document by subscribing to **Telegram Premium**.";
 
 "lng_limits_increase" = "Increase Limit";
 
 "lng_sticker_premium_text" = "This pack contains premium stickers like this one.";
 "lng_sticker_premium_view" = "View";
-"lng_animated_emoji_text" = "Subscribe to **Teamgram Premium** to unlock this emoji.";
+"lng_animated_emoji_text" = "Subscribe to **Telegram Premium** to unlock this emoji.";
 "lng_animated_emoji_saved" = "Try sending these emoji in **Saved Messages** for free to test.";
 "lng_animated_emoji_saved_open" = "Open";
 
@@ -299,7 +299,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_edit_caption_voice" = "Sorry, you can't edit your message while you're having an unsent voice message.";
 
 "lng_intro_about" = "Welcome to the official Teamgram Desktop app.\nIt's fast and secure.";
-"lng_start_msgs" = "Start messaging";
+"lng_start_msgs" = "START MESSAGING";
 
 "lng_intro_next" = "Next";
 "lng_intro_finish" = "Sign up";
@@ -310,7 +310,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_intro_qr_title" = "Scan From Mobile Teamgram";
 "lng_intro_qr_step1" = "Open Teamgram on your phone";
-"lng_intro_qr_step2" = "Go to Settings > Devices > Link Desktop";
+"lng_intro_qr_step2" = "Go to Settings > Devices > Scan QR Code";
 "lng_intro_qr_step3" = "Scan this image to Log In";
 "lng_intro_qr_skip" = "Or log in using your phone number";
 
@@ -331,6 +331,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_code_desc" = "We have sent you a message with activation\ncode to your phone. Please enter it below.";
 "lng_code_from_telegram" = "Please enter the code you've just received\nin your previous **Teamgram** app.";
 "lng_code_no_telegram" = "Send code via SMS";
+"lng_code_register_phone" = "If you already signed up for Teamgram, please enter the code which was sent to your mobile app.\n\nIf you haven’t signed up yet, please register from your phone or tablet first.";
 "lng_code_call" = "Teamgram will call you in {minutes}:{seconds}";
 "lng_code_calling" = "Requesting a call from Teamgram...";
 "lng_code_called" = "Teamgram dialed your number";
@@ -472,8 +473,6 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_languages" = "Languages";
 "lng_languages_none" = "No languages found.";
-"lng_languages_count#one" = "{count} language";
-"lng_languages_count#other" = "{count} languages";
 "lng_sure_save_language" = "Teamgram will restart in order to change language";
 "lng_settings_update_automatically" = "Update automatically";
 "lng_settings_install_beta" = "Install beta versions";
@@ -561,7 +560,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_profile_photo_privacy" = "Profile photo";
 "lng_settings_voices_privacy" = "Voice messages";
 "lng_settings_privacy_premium" = "Only subscribers of {link} can restrict receiving voice messages.";
-"lng_settings_privacy_premium_link" = "Teamgram Premium";
+"lng_settings_privacy_premium_link" = "Telegram Premium";
 "lng_settings_passcode_disable" = "Disable Passcode";
 "lng_settings_passcode_disable_sure" = "Are you sure you want to disable passcode?";
 "lng_settings_password_disable" = "Disable Cloud Password";
@@ -571,6 +570,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_username_label" = "Username";
 "lng_settings_phone_label" = "Phone number";
 "lng_settings_username_add" = "Add username";
+"lng_settings_close_sure" = "Are you sure you want to close this page? You didn't save your changes.";
 "lng_settings_peer_to_peer_about" = "Disabling peer-to-peer will relay all calls through Teamgram servers to avoid revealing your IP address, but may slightly decrease audio quality.";
 "lng_settings_advanced" = "Advanced";
 "lng_settings_stickers_emoji" = "Stickers and emoji";
@@ -615,7 +615,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_settings_cloud_password_password_title" = "Password";
 "lng_settings_cloud_password_hint_title" = "Password Hint";
 "lng_settings_cloud_password_email_title" = "Recovery Email";
-"lng_settings_cloud_password_start_about" = "Protect your Teamgram account with an additional password.";
+"lng_settings_cloud_password_start_about" = "Protect your Telegram account with an additional password.";
 "lng_settings_cloud_password_hint_about" = "You can create a hint for your password.";
 "lng_settings_cloud_password_email_about" = "Please enter your new recovery email. It is the only way to recover a forgotten password.";
 "lng_settings_cloud_password_password_subtitle" = "Create Password";
@@ -702,6 +702,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_background_text1" = "Ah, you kids today with techno music! You should enjoy the classics, like Hasselhoff!";
 "lng_background_text2" = "I can't even take you seriously right now.";
 "lng_background_bad_link" = "This background link appears to be invalid.";
+"lng_background_gradient_unsupported" = "Teamgram Desktop doesn't support gradient backgrounds yet.";
 "lng_background_apply" = "Apply";
 "lng_background_share" = "Share";
 "lng_background_link_copied" = "Link copied to clipboard";
@@ -1114,9 +1115,9 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_profile_suggest_sure" = "You can suggest {user} to set this photo for their page.";
 "lng_profile_suggest_button" = "Suggest";
 "lng_profile_set_personal_sure" = "Only you will see this photo and it will replace any photo {user} sets for themselves.";
-"lng_profile_accept_photo_sure" = "{user} suggests you to use this profile photo for your Teamgram account.";
+"lng_profile_accept_photo_sure" = "{user} suggests you to use this profile photo for your Telegram account.";
 "lng_profile_set_photo_button" = "Set Photo";
-"lng_profile_accept_video_sure" = "{user} suggests you to use this profile video for your Teamgram account.";
+"lng_profile_accept_video_sure" = "{user} suggests you to use this profile video for your Telegram account.";
 "lng_profile_set_video_button" = "Set Video";
 "lng_profile_changed_photo_title" = "Photo updated";
 "lng_profile_changed_photo_about" = "You can change it in {link}.";
@@ -1192,7 +1193,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_manage_peer_reactions_available" = "Available reactions";
 
 "lng_manage_peer_antispam" = "Aggressive Anti-Spam";
-"lng_manage_peer_antispam_about" = "Teamgram will filter more spam but may occasionally affect ordinary messages. You can report False Positives in Recent Actions.";
+"lng_manage_peer_antispam_about" = "Telegram will filter more spam but may occasionally affect ordinary messages. You can report False Positives in Recent Actions.";
 "lng_manage_peer_antispam_not_enough#one" = "Aggressive filtering can be enabled only in groups with more than **{count} member**.";
 "lng_manage_peer_antispam_not_enough#other" = "Aggressive filtering can be enabled only in groups with more than **{count} members**.";
 
@@ -1543,6 +1544,8 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_group_invite_days_left#other" = "{count} days left";
 "lng_group_invite_about_permanent_group" = "Anyone who has Teamgram installed will be able to join your group by following this link.";
 "lng_group_invite_about_permanent_channel" = "Anyone who has Teamgram installed will be able to join your channel by following this link.";
+"lng_group_invite_manage" = "Manage Invite Links";
+"lng_group_invite_manage_about" = "You can create additional invite links that have limited time or number of usages.";
 "lng_group_invite_title" = "Invite links";
 "lng_group_invite_add" = "Create a New Link";
 "lng_group_invite_add_about" = "You can generate invite links that will expire after they've been used.";
@@ -1701,7 +1704,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_premium" = "Premium";
 "lng_premium_free" = "Free";
-"lng_premium_more_about" = "More About Teamgram Premium";
+"lng_premium_more_about" = "More About Telegram Premium";
 "lng_premium_unlock_reactions" = "Unlock Premium Reactions";
 "lng_premium_unlock_stickers" = "Unlock Premium Stickers";
 "lng_premium_unlock_emoji" = "Unlock Animated Emoji";
@@ -1715,19 +1718,19 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 
 "lng_premium_emoji_status_title" = "{user} set this emoji from {link} as their current status.";
 "lng_premium_emoji_status_title_colored" = "{user} set this emoji as their current status.";
-"lng_premium_emoji_status_about" = "Emoji status is a premium feature. Other features included in **Teamgram Premium**:";
+"lng_premium_emoji_status_about" = "Emoji status is a premium feature. Other features included in **Telegram Premium**:";
 "lng_premium_emoji_status_button" = "Unlock Emoji Status";
 
-"lng_premium_summary_user_title" = "{user} is a subscriber of Teamgram Premium.";
-"lng_premium_summary_user_about" = "Owners of Teamgram Premium accounts have exclusive access to multiple additional features.";
+"lng_premium_summary_user_title" = "{user} is a subscriber of Telegram Premium.";
+"lng_premium_summary_user_about" = "Owners of Telegram Premium accounts have exclusive access to multiple additional features.";
 
-"lng_premium_summary_title" = "Teamgram Premium";
-"lng_premium_summary_top_about" = "Go **beyond the limits**, get **exclusive features** and support us by subscribing to **Teamgram Premium**.";
+"lng_premium_summary_title" = "Telegram Premium";
+"lng_premium_summary_top_about" = "Go **beyond the limits**, get **exclusive features** and support us by subscribing to **Telegram Premium**.";
 "lng_premium_summary_title_subscribed" = "You are all set!";
-"lng_premium_summary_subtitle_gift#one" = "{user} has gifted you a {count}-month subscription for Teamgram Premium.";
-"lng_premium_summary_subtitle_gift#other" = "{user} has gifted you a {count}-months subscription for Teamgram Premium.";
-"lng_premium_summary_subtitle_gift_me#one" = "You gifted {user} a {count}-month subscription for Teamgram Premium.";
-"lng_premium_summary_subtitle_gift_me#other" = "You gifted {user} a {count}-months subscription for Teamgram Premium.";
+"lng_premium_summary_subtitle_gift#one" = "{user} has gifted you a {count}-month subscription for Telegram Premium.";
+"lng_premium_summary_subtitle_gift#other" = "{user} has gifted you a {count}-months subscription for Telegram Premium.";
+"lng_premium_summary_subtitle_gift_me#one" = "You gifted {user} a {count}-month subscription for Telegram Premium.";
+"lng_premium_summary_subtitle_gift_me#other" = "You gifted {user} a {count}-months subscription for Telegram Premium.";
 "lng_premium_summary_subtitle_double_limits" = "Doubled Limits";
 "lng_premium_summary_about_double_limits" = "Up to 1000 channels, 20 folders, 10 pins, 20 public links, 4 accounts and more.";
 "lng_premium_summary_subtitle_more_upload" = "4Gb Upload Size";
@@ -1737,7 +1740,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_premium_summary_subtitle_voice_to_text" = "Voice-to-Text Conversion";
 "lng_premium_summary_about_voice_to_text" = "Ability to read the transcript of any incoming voice message.";
 "lng_premium_summary_subtitle_no_ads" = "No Ads";
-"lng_premium_summary_about_no_ads" = "No more ads in public channels where Teamgram sometimes shows ads.";
+"lng_premium_summary_about_no_ads" = "No more ads in public channels where Telegram sometimes shows ads.";
 "lng_premium_summary_subtitle_emoji_status" = "Emoji Status";
 "lng_premium_summary_about_emoji_status" = "Add any of thousands emoji next to your name to display current activity.";
 "lng_premium_summary_subtitle_infinite_reactions" = "Infinite Reactions";
@@ -1749,17 +1752,17 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_premium_summary_subtitle_advanced_chat_management" = "Advanced Chat Management";
 "lng_premium_summary_about_advanced_chat_management" = "Tools to set default folder, auto-archive and hide new chats from non-contacts.";
 "lng_premium_summary_subtitle_profile_badge" = "Profile Badge";
-"lng_premium_summary_about_profile_badge" = "A badge next to your name showing that you are helping support Teamgram.";
+"lng_premium_summary_about_profile_badge" = "A badge next to your name showing that you are helping support Telegram.";
 "lng_premium_summary_subtitle_animated_userpics" = "Animated Profile Pictures";
 "lng_premium_summary_about_animated_userpics" = "Video avatars animated in chat lists and chats to allow for additional self-expression.";
 "lng_premium_summary_subtitle_translation" = "Real-Time Translation";
 "lng_premium_summary_about_translation" = "Real-time translation of channels and chats into other languages.";
-"lng_premium_summary_bottom_subtitle" = "About Teamgram Premium";
-"lng_premium_summary_bottom_about" = "While the free version of Teamgram already gives its users more than any other messaging application, **Teamgram Premium** pushes its capabilities even further.\n\n**Teamgram Premium** is a paid option, because most Premium Features require additional expenses from Teamgram to third parties such as data center providers and server manufacturers. Contributions from **Teamgram Premium** users allow us to cover such costs and also help Teamgram stay free for everyone.";
+"lng_premium_summary_bottom_subtitle" = "About Telegram Premium";
+"lng_premium_summary_bottom_about" = "While the free version of Telegram already gives its users more than any other messaging application, **Telegram Premium** pushes its capabilities even further.\n\n**Telegram Premium** is a paid option, because most Premium Features require additional expenses from Telegram to third parties such as data center providers and server manufacturers. Contributions from **Telegram Premium** users allow us to cover such costs and also help Telegram stay free for everyone.";
 "lng_premium_summary_button" = "Subscribe for {cost} per month";
 
-"lng_premium_success" = "You've successfully subscribed to Teamgram Premium!";
-"lng_premium_unavailable" = "This feature requires subscription to **Teamgram Premium**.\n\nUnfortunately, **Teamgram Premium** is not available in your region.";
+"lng_premium_success" = "You've successfully subscribed to Telegram Premium!";
+"lng_premium_unavailable" = "This feature requires subscription to **Telegram Premium**.\n\nUnfortunately, **Telegram Premium** is not available in your region.";
 
 // Doubled Limits.
 "lng_premium_double_limits_subtitle_channels" = "Groups and Channels";
@@ -1771,8 +1774,8 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_premium_double_limits_about_pins#other" = "Pin up to {count} chats in your main chat list";
 
 "lng_premium_double_limits_subtitle_links" = "Public Links";
-"lng_premium_double_limits_about_links#one" = "Reserve up to {count} t.me/name links";
-"lng_premium_double_limits_about_links#other" = "Reserve up to {count} t.me/name links";
+"lng_premium_double_limits_about_links#one" = "Reserve up to {count} teamgram.me/name links";
+"lng_premium_double_limits_about_links#other" = "Reserve up to {count} teamgram.me/name links";
 
 "lng_premium_double_limits_subtitle_gifs" = "Saved GIFs";
 "lng_premium_double_limits_about_gifs#one" = "Save up to {count} GIFs in your Favorite GIFs";
@@ -1801,17 +1804,17 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_premium_double_limits_about_accounts#other" = "Connect {count} accounts with different mobile numbers";
 //
 
-"lng_premium_gift_title" = "Gift Teamgram Premium";
-"lng_premium_gift_about" = "Let **{user}** enjoy exclusive features of Teamgram with **Teamgram Premium**.";
+"lng_premium_gift_title" = "Gift Telegram Premium";
+"lng_premium_gift_about" = "Let **{user}** enjoy exclusive features of Telegram with **Telegram Premium**.";
 "lng_premium_gift_button" = "Gift Subscription for {cost}";
 "lng_premium_gift_per" = "{cost} / month";
-"lng_premium_gift_terms" = "You can review the list of features and terms of use for Teamgram Premium {link}.";
+"lng_premium_gift_terms" = "You can review the list of features and terms of use for Telegram Premium {link}.";
 "lng_premium_gift_terms_link" = "here";
 
 "lng_accounts_limit_title" = "Limit Reached";
 "lng_accounts_limit1#one" = "You have reached the limit of **{count}** connected accounts.";
 "lng_accounts_limit1#other" = "You have reached the limit of **{count}** connected accounts.";
-"lng_accounts_limit2" = "You can free one space by subscribing to **Teamgram Premium** with one of these connected accounts:";
+"lng_accounts_limit2" = "You can free one space by subscribing to **Telegram Premium** with one of these connected accounts:";
 
 "lng_emoji_status_for_title" = "Set Status for...";
 "lng_emoji_status_for_submit" = "Set Status";
@@ -1821,7 +1824,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_group_about_text" = "Groups can have:";
 "lng_group_about1" = "Up to 100,000 members";
 "lng_group_about2" = "Persistent chat history";
-"lng_group_about3" = "Public links such as t.me/title";
+"lng_group_about3" = "Public links such as teamgram.me/title";
 "lng_group_about4" = "Admins with different rights";
 
 "lng_switch_stickers" = "Stickers";
@@ -1877,7 +1880,6 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_masks_archive_pack" = "Archive Masks";
 "lng_masks_has_been_archived" = "Mask pack has been archived.";
 "lng_masks_installed" = "Mask pack has been installed.";
-"lng_emoji_nothing_found" = "No emoji found";
 
 "lng_in_dlg_photo" = "Photo";
 "lng_in_dlg_album" = "Album";
@@ -1921,7 +1923,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_new_contact_from_request_channel" = "{user} is an admin of {name}, a channel you requested to join.";
 "lng_new_contact_from_request_group" = "{user} is an admin of {name}, a group you requested to join.";
 "lng_new_contact_about_status" = "This account uses {emoji} as a custom status next to its\nname. Such emoji statuses are available to all\nsubscribers of {link}.";
-"lng_new_contact_about_status_link" = "Teamgram Premium";
+"lng_new_contact_about_status_link" = "Telegram Premium";
 "lng_from_request_title_channel" = "Chat with channel's admin";
 "lng_from_request_title_group" = "Chat with group's admin";
 "lng_from_request_body" = "You received this message because you requested to join {name} on {date}.";
@@ -1963,7 +1965,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_send_as_title" = "Send message as...";
 "lng_send_as_anonymous_admin" = "Anonymous admin";
 "lng_send_as_premium_required" = "Subscribe to {link} to be able to comment on behalf of your channels in group chats.";
-"lng_send_as_premium_required_link" = "Teamgram Premium";
+"lng_send_as_premium_required_link" = "Telegram Premium";
 "lng_record_cancel" = "Release outside this field to cancel";
 "lng_record_lock_cancel_sure" = "Are you sure you want to stop recording and discard your voice message?";
 "lng_record_listen_cancel_sure" = "Are you sure you want to discard your recorded voice message?";
@@ -2410,6 +2412,8 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_theme_preview_users#one" = "{count} person is using this theme";
 "lng_theme_preview_users#other" = "{count} people are using this theme";
 
+"lng_new_authorization" = "{name},\nWe detected a login into your account from a new device on {day}, {date} at {time}\n\nDevice: {device}\nLocation: {location}\n\nIf this wasn't you, you can go to Settings — Show all sessions and terminate that session.\n\nIf you think that somebody logged in to your account against your will, you can enable two-step verification in Settings.\n\nSincerely,\nThe Teamgram Team";
+
 "lng_new_version_wrap" = "Teamgram Desktop was updated to version {version}\n\n{changes}\n\nFull version history is available here:\n{link}";
 "lng_new_version_minor" = "— Bug fixes and other minor improvements";
 
@@ -2476,6 +2480,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_theme_editor_menu_import" = "Import theme";
 "lng_theme_editor_menu_show" = "Show palette file";
 
+"lng_payments_not_supported" = "Sorry, Teamgram Desktop doesn't support payments yet. Please use one of our mobile apps to do this.";
 "lng_payments_webview_no_use" = "Unfortunately, you can't use payments with current system configuration.";
 "lng_payments_webview_install_edge" = "Please install {link}.";
 "lng_payments_webview_install_webkit" = "Please install WebKitGTK (webkit2gtk-5.0/webkit2gtk-4.1/webkit2gtk-4.0) using your package manager.";
@@ -2706,6 +2711,14 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_group_call_context_remove" = "Remove";
 "lng_group_call_remove_channel" = "Remove {channel} from the voice chat?";
 "lng_group_call_remove_channel_from_channel" = "Remove {channel} from the live stream?";
+"lng_group_call_duration_days#one" = "{count} day";
+"lng_group_call_duration_days#other" = "{count} days";
+"lng_group_call_duration_hours#one" = "{count} hour";
+"lng_group_call_duration_hours#other" = "{count} hours";
+"lng_group_call_duration_minutes#one" = "{count} minute";
+"lng_group_call_duration_minutes#other" = "{count} minutes";
+"lng_group_call_duration_seconds#one" = "{count} second";
+"lng_group_call_duration_seconds#other" = "{count} seconds";
 "lng_group_call_mac_access" = "Teamgram Desktop does not have access to system wide keyboard input required for Push to Talk.";
 "lng_group_call_mac_input" = "Please allow **Input Monitoring** for Teamgram in Privacy Settings.";
 "lng_group_call_mac_accessibility" = "Please allow **Accessibility** for Teamgram in Privacy Settings.\n\nApp restart may be required.";
@@ -3366,7 +3379,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_export_suggest_title" = "Data export ready";
 "lng_export_suggest_text" = "You can now download the data you requested. Start exporting data?";
 "lng_export_suggest_cancel" = "Not now";
-"lng_export_about_telegram" = "Here is all the data you requested. Remember: we don’t use your data for ad targeting, we don’t sell it to others, and we’re not part of any “family of companies.”\n\nTeamgram only keeps the information it needs to function as a feature-rich cloud service – for example, your cloud chats so that you can access them from any devices without using third-party backups, or your contacts so that you can rely on your existing social graph when messaging people on Teamgram.\n\nCheck out Settings > Privacy & Security on Teamgram's mobile apps for relevant settings.";
+"lng_export_about_telegram" = "Here is all the data you requested. Remember: we don’t use your data for ad targeting, we don’t sell it to others, and we’re not part of any “family of companies.”\n\Teamgram only keeps the information it needs to function as a feature-rich cloud service – for example, your cloud chats so that you can access them from any devices without using third-party backups, or your contacts so that you can rely on your existing social graph when messaging people on Teamgram.\n\nCheck out Settings > Privacy & Security on Teamgram's mobile apps for relevant settings.";
 "lng_export_about_contacts" = "If you allow access, your contacts are continuously synced with Teamgram. Thanks to this, you can easily switch to Teamgram without losing your existing social graph – and connect with friends across all your devices. We use data about your contacts to let you know when they join Teamgram. We also use it to make sure that you see the names you have in your phone book instead of the screen names people choose for themselves.\n\nYou can disable contact syncing or delete your stored contacts in Settings > Privacy & Security on Teamgram's mobile apps.";
 "lng_export_about_frequent" = "This rating shows which people you are likelier to message frequently. Teamgram uses this data to populate the 'People' box at the top of the Search section. This rating is also calculated for inline bots so that the app can suggest the bots you are most likely to use in the attachment menu (or when you start a new message with \"@\").\n\nTo delete this data, go to Settings > Privacy & Security and disable 'Suggest Frequent Contacts' (requires Teamgram for iOS v.4.8.3 or Teamgram for Android v.4.8.10 or higher).";
 "lng_export_about_sessions" = "We store session info to display your connected devices in Settings > Privacy & Security > Active Sessions.";
@@ -3532,7 +3545,7 @@ https://github.com/Teamgramdesktop/tdesktop/blob/master/LEGAL
 "lng_sponsored_info_description1" = "Unlike other apps, Teamgram never uses your private data to target ads. Sponsored messages on Teamgram are based solely on the topic of the public channels in which they are shown. This means that no user data is mined or analyzed to display ads, and every user viewing a channel on Teamgram sees the same sponsored messages.\n\nUnlike other apps, Teamgram doesn't track whether you tapped on a sponsored message and doesn't profile you based on your activity. We also prevent external links in sponsored messages to ensure that third parties can’t spy on our users. We believe that everyone has the right to privacy, and technological platforms should respect that.\n\nTeamgram offers a free and unlimited service to hundreds of millions of users, which involves significant server and traffic costs. In order to remain independent and stay true to its values, Teamgram developed a paid tool to promote messages with user privacy in mind. We welcome responsible advertisers at:";
 "lng_sponsored_info_description2" = "Sponsored Messages are currently in test mode. Once they are fully launched and allow Teamgram to cover its basic costs, we will start sharing ad revenue with the owners of public channels in which sponsored messages are displayed.\n\nOnline ads should no longer be synonymous with abuse of user privacy. Let us redefine how a tech company should operate – together.";
 
-"lng_telegram_features_url" = "https://t.me/TeamgramTips";
+"lng_telegram_features_url" = "https://teamgram.me/TeamgramTips";
 
 "lng_ringtones_box_title" = "Notification Sound";
 "lng_ringtones_box_cloud_subtitle" = "Choose your tone";
