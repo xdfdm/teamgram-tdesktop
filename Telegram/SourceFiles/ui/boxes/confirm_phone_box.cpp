@@ -7,7 +7,6 @@ https://github.com/telegramdesktop/tdesktop/blob/master/LEGAL
 */
 #include "ui/boxes/confirm_phone_box.h"
 
-#include "core/file_utilities.h"
 #include "ui/boxes/confirm_box.h"
 #include "ui/widgets/buttons.h"
 #include "ui/widgets/labels.h"
@@ -23,20 +22,10 @@ ConfirmPhoneBox::ConfirmPhoneBox(
 	QWidget*,
 	const QString &phone,
 	int codeLength,
-	const QString &openUrl,
 	std::optional<int> timeout)
 : _phone(phone)
 , _sentCodeLength(codeLength)
-, _call([=] { sendCall(); }, [=] { update(); }) {
-	if (!openUrl.isEmpty()) {
-		_fragment.create(
-			this,
-			tr::lng_intro_fragment_button(),
-			st::fragmentBoxButton);
-		_fragment->setClickedCallback([=] { File::OpenUrl(openUrl); });
-		_fragment->setTextTransform(
-			Ui::RoundButton::TextTransform::NoTransform);
-	}
+, _call([this] { sendCall(); }, [this] { update(); }) {
 	if (timeout) {
 		_call.setStatus({ Ui::SentCodeCall::State::Waiting, *timeout });
 	}
@@ -70,8 +59,7 @@ void ConfirmPhoneBox::prepare() {
 			+ _code->height()
 			+ st::usernameSkip
 			+ _about->height()
-			+ st::usernameSkip
-			+ (_fragment ? (_fragment->height() + fragmentSkip()) : 0));
+			+ st::usernameSkip);
 
 	connect(_code, &Ui::InputField::submitted, [=] { sendCode(); });
 
@@ -144,25 +132,13 @@ void ConfirmPhoneBox::resizeEvent(QResizeEvent *e) {
 		_code->height());
 	_code->moveToLeft(st::usernamePadding.left(), st::usernamePadding.top());
 
-	if (_fragment) {
-		_fragment->setFullWidth(_code->width());
-		_fragment->moveToLeft(
-			(width() - _fragment->width()) / 2,
-			_code->y() + _code->height() + st::usernameSkip);
-	}
-
-	const auto aboutTop = _fragment
-		? (_fragment->y() + _fragment->height() + fragmentSkip())
-		: (_code->y() + _code->height() + st::usernameSkip);
-	_about->moveToLeft(st::usernamePadding.left(), aboutTop);
+	_about->moveToLeft(
+		st::usernamePadding.left(),
+		_code->y() + _code->height() + st::usernameSkip);
 }
 
 void ConfirmPhoneBox::setInnerFocus() {
 	_code->setFocusFast();
-}
-
-int ConfirmPhoneBox::fragmentSkip() const {
-	return st::usernamePadding.bottom();
 }
 
 rpl::producer<QString> ConfirmPhoneBox::checkRequests() const {
