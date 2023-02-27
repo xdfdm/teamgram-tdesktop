@@ -654,17 +654,13 @@ void NewVersionLaunched(int oldVersion) {
 } // namespace Platform
 
 void psSendToMenu(bool send, bool silent) {
-<<<<<<< HEAD
 	ManageAppLink(
 		send,
 		silent,
 		FOLDERID_SendTo,
 		L"-sendpath",
-		L"Telegram send to link.\n"
-		"You can disable send to menu item in Telegram settings.");
-=======
-	ManageAppLink(send, silent, CSIDL_SENDTO, L"-sendpath", L"Teamgram send to link.\nYou can disable send to menu item in Telegram settings.");
->>>>>>> teamgram2
+		L"Teamgram send to link.\n"
+		"You can disable send to menu item in Teamgram settings.");
 }
 
 bool psLaunchMaps(const Data::LocationPoint &point) {
